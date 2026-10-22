@@ -9,7 +9,8 @@ on:
 
 env:
   PYTHON_VERSION: "3.14"
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/online-retail-churn
+  # GHCR image names must be lowercase, so the owner is spelled out instead of github.repository_owner
+  IMAGE_NAME: ghcr.io/elcebir71/online-retail-churn
 
 jobs:
   test:
