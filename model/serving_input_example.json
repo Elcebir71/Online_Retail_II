@@ -1,0 +1,50 @@
+{
+  "dataframe_split": {
+    "columns": [
+      "recency_days",
+      "frequency",
+      "monetary",
+      "avg_order_value",
+      "n_products",
+      "tenure_days",
+      "return_rate",
+      "orders_last_90d",
+      "country"
+    ],
+    "data": [
+      [
+        72,
+        11,
+        372.86,
+        33.89636363636364,
+        26,
+        268,
+        0.23255813953488372,
+        1.0,
+        "United Kingdom"
+      ],
+      [
+        113,
+        2,
+        1268.52,
+        634.26,
+        47,
+        132,
+        0.09615384615384616,
+        0.0,
+        "Italy"
+      ],
+      [
+        110,
+        1,
+        488.21000000000004,
+        488.21000000000004,
+        22,
+        110,
+        0.0,
+        0.0,
+        "Bahrain"
+      ]
+    ]
+  }
+}
