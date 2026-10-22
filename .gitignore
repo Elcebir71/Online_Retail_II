@@ -25,3 +25,5 @@ venv/
 *.log
 *.tmp
 *.cache
+# Monitoring reports
+reports/

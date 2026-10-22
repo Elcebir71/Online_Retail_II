@@ -5,7 +5,7 @@
 End-to-end MLOps project that predicts which customers of an online retailer will churn,
 so marketing can target them with win-back campaigns.
 
-**Stack:** scikit-learn · MLflow (tracking + model registry) · FastAPI · Docker · GitHub Actions
+**Stack:** scikit-learn · MLflow (tracking + model registry) · FastAPI · Docker · GitHub Actions · PSI drift monitoring
 
 ## Problem
 
@@ -41,6 +41,7 @@ src/
   train.py         # train, evaluate, log to MLflow, optionally register
   export_model.py  # promote a version to "champion" and export it to model/
   api.py           # FastAPI service (/health, /predict)
+  monitor.py       # data drift (PSI) and performance monitoring
 model/             # exported champion model served by the API and the Docker image
 tests/             # unit tests for features and the API
 Dockerfile
@@ -102,9 +103,35 @@ On every push and pull request, GitHub Actions:
 3. On `main` only: publishes the image to **GitHub Container Registry**
    (`latest` and commit-SHA tags).
 
+## Monitoring
+
+`src/monitor.py` compares the customers at one or more monitoring dates with the training
+snapshot that is exported next to the served model (`model/reference.parquet`):
+
+- **Data drift:** Population Stability Index (PSI) for every feature and for the predicted
+  churn probability (< 0.1 stable, 0.1–0.25 warning, ≥ 0.25 drift). Implemented from scratch
+  with quantile bins from the reference data.
+- **Performance:** ROC-AUC and PR-AUC once the 90-day churn labels of the period are known.
+- **Alert:** retraining is recommended when a feature drifts significantly, the prediction
+  distribution shifts, or ROC-AUC drops more than 0.05 below the reference.
+
+```bash
+python -m src.monitor --cutoff 2010-12-01 2011-03-01 2011-06-01 2011-09-09
+```
+
+Each period produces `reports/monitoring_<date>.html` and `.json` and an MLflow run in the
+`online-retail-churn-monitoring` experiment, so PSI and AUC can be plotted over time in the
+MLflow UI. `--fail-on-alert` makes the script exit with code 1, so it can gate a scheduled job.
+
+**Finding:** cumulative features such as `tenure_days`, `frequency` and `monetary` drift by
+construction, because customer histories get longer as time passes. A natural next step is to
+compute them over a fixed window (e.g. the last 12 months) so the model sees stable inputs.
+
 ## Roadmap
 
 - [x] Data pipeline, churn label and model tracking with MLflow
 - [x] FastAPI service and Docker image
 - [x] CI/CD with GitHub Actions
-- [ ] Data drift and performance monitoring
+- [x] Data drift and performance monitoring
+- [ ] Fixed-window features to remove drift caused by growing customer histories
+- [ ] Scheduled monitoring job with automatic retraining
