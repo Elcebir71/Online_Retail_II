@@ -1,8 +1,17 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.monitor import PSI_DRIFT, PSI_WARNING, psi_categorical, psi_numeric, psi_status
+from src.monitor import (
+    PSI_DRIFT,
+    PSI_WARNING,
+    baseline_performance,
+    psi_categorical,
+    psi_numeric,
+    psi_status,
+)
 
 rng = np.random.default_rng(42)
 
@@ -36,3 +45,16 @@ def test_psi_categorical():
 @pytest.mark.parametrize("value,expected", [(0.05, "ok"), (0.15, "warning"), (0.4, "drift")])
 def test_psi_status(value, expected):
     assert psi_status(value) == expected
+
+
+def test_baseline_performance_reads_test_metrics(tmp_path):
+    (tmp_path / "serving_meta.json").write_text(
+        json.dumps({"version": "3", "test_metrics": {"roc_auc": 0.7712, "pr_auc": 0.79, "f1": 0.69}})
+    )
+    assert baseline_performance(tmp_path) == {"roc_auc": 0.7712, "pr_auc": 0.79}
+
+
+def test_baseline_performance_missing(tmp_path):
+    assert baseline_performance(tmp_path) is None
+    (tmp_path / "serving_meta.json").write_text(json.dumps({"version": "2"}))
+    assert baseline_performance(tmp_path) is None

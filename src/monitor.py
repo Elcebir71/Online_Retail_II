@@ -104,7 +104,7 @@ class MonitoringResult:
     n_customers: int
     churn_rate: float | None
     performance: dict[str, float] | None
-    reference_performance: dict[str, float]
+    reference_performance: dict[str, float]  # baseline the current scores are compared with
     drifted_features: list[str]
     alerts: list[str] = field(default_factory=list)
 
@@ -113,9 +113,23 @@ class MonitoringResult:
         return bool(self.alerts)
 
 
-def evaluate_period(model, reference: pd.DataFrame, tx: pd.DataFrame, cutoff: str) -> tuple[MonitoringResult, pd.DataFrame]:
+def baseline_performance(model_path: Path) -> dict[str, float] | None:
+    """Hold-out test scores recorded at training time (written by src.export_model)."""
+    meta_path = model_path / "serving_meta.json"
+    if not meta_path.exists():
+        return None
+    metrics = json.loads(meta_path.read_text()).get("test_metrics") or {}
+    if {"roc_auc", "pr_auc"} <= metrics.keys():
+        return {"roc_auc": round(metrics["roc_auc"], 4), "pr_auc": round(metrics["pr_auc"], 4)}
+    return None
+
+
+def evaluate_period(
+    model, reference: pd.DataFrame, tx: pd.DataFrame, cutoff: str, baseline: dict[str, float] | None = None
+) -> tuple[MonitoringResult, pd.DataFrame]:
     reference = reference.assign(churn_probability=model.predict_proba(reference[FEATURES])[:, 1])
-    ref_perf = scores(reference)
+    # Scores on the training data itself are optimistic, so prefer the hold-out test baseline
+    ref_perf = baseline or scores(reference)
 
     labels_known = tx["invoice_date"].max() >= pd.Timestamp(cutoff) + np.timedelta64(HORIZON_DAYS - 1, "D")
     if labels_known:
@@ -176,7 +190,7 @@ table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ddd;
 &middot; churn rate {result.churn_rate if result.churn_rate is not None else "not known yet"}</p>
 {verdict}
 <h2>Performance</h2>
-<table><tr><th>Metric</th><th>Reference (training)</th><th>Current</th></tr>
+<table><tr><th>Metric</th><th>Baseline</th><th>Current</th></tr>
 <tr><td>ROC-AUC</td><td>{ref["roc_auc"]:.3f}</td><td>{perf.get("roc_auc", "n/a")}</td></tr>
 <tr><td>PR-AUC</td><td>{ref["pr_auc"]:.3f}</td><td>{perf.get("pr_auc", "n/a")}</td></tr></table>
 <h2>Data drift (PSI)</h2>
@@ -195,13 +209,16 @@ def main() -> None:
 
     model = mlflow.sklearn.load_model(str(args.model_path))
     reference = pd.read_parquet(args.model_path / "reference.parquet")
+    baseline = baseline_performance(args.model_path)
+    if baseline is None:
+        print("No hold-out baseline in serving_meta.json; comparing against in-sample training scores.")
     tx = pd.read_parquet(PROCESSED_PATH)
     REPORT_DIR.mkdir(exist_ok=True)
     mlflow.set_experiment(EXPERIMENT)
 
     any_alert = False
     for cutoff in args.cutoff:
-        result, table = evaluate_period(model, reference, tx, cutoff)
+        result, table = evaluate_period(model, reference, tx, cutoff, baseline)
         html_path = REPORT_DIR / f"monitoring_{cutoff}.html"
         json_path = REPORT_DIR / f"monitoring_{cutoff}.json"
         html_path.write_text(render_html(result, table), encoding="utf-8")

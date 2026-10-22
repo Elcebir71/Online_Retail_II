@@ -38,9 +38,19 @@ def main() -> None:
     # Training data snapshot, used later as the reference for drift monitoring
     mlflow.artifacts.download_artifacts(run_id=version.run_id, artifact_path="reference.parquet", dst_path=str(EXPORT_DIR))
 
-    meta = {"name": MODEL_NAME, "version": str(version.version), "run_id": version.run_id}
+    run = client.get_run(version.run_id)
+    meta = {
+        "name": MODEL_NAME,
+        "version": str(version.version),
+        "run_id": version.run_id,
+        "model_type": run.data.params.get("model_type"),
+        # Hold-out test scores from training, used as the baseline for performance monitoring
+        "test_metrics": {k.removeprefix("test_"): v for k, v in run.data.metrics.items() if k.startswith("test_")},
+    }
     (EXPORT_DIR / "serving_meta.json").write_text(json.dumps(meta, indent=2))
-    print(f"Exported {MODEL_NAME} v{version.version} (run {version.run_id}) to {EXPORT_DIR}/")
+    print(
+        f"Exported {MODEL_NAME} v{version.version} ({meta['model_type']}, run {version.run_id}) to {EXPORT_DIR}/"
+    )
 
 
 if __name__ == "__main__":
