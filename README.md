@@ -2,10 +2,13 @@
 
 [![CI/CD](https://github.com/Elcebir71/Online_Retail_II/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Elcebir71/Online_Retail_II/actions/workflows/ci-cd.yml)
 
+**Live demo:** [Swagger UI](https://churn-api.orangeocean-d98c39b7.swedencentral.azurecontainerapps.io/docs)
+(Azure Container Apps, scales to zero, so the first request may take ~15 s)
+
 End-to-end MLOps project that predicts which customers of an online retailer will churn,
 so marketing can target them with win-back campaigns.
 
-**Stack:** scikit-learn · MLflow (tracking + model registry) · FastAPI · Docker · GitHub Actions · PSI drift monitoring
+**Stack:** scikit-learn · MLflow (tracking + model registry) · FastAPI · Docker · GitHub Actions · Azure Container Apps · PSI drift monitoring
 
 ## Problem
 
@@ -102,6 +105,18 @@ On every push and pull request, GitHub Actions:
 2. Builds the Docker image and **smoke tests** it (`/health` and `/predict`).
 3. On `main` only: publishes the image to **GitHub Container Registry**
    (`latest` and commit-SHA tags).
+
+### Deployment
+
+The published image runs on **Azure Container Apps** (scale to zero, external HTTPS ingress):
+
+```bash
+az containerapp create --name churn-api --resource-group <rg> --environment <env> \
+  --image ghcr.io/elcebir71/online-retail-churn:latest --target-port 8000 \
+  --ingress external --min-replicas 0 --max-replicas 1
+# after a new image is published
+az containerapp update --name churn-api --resource-group <rg> --image ghcr.io/elcebir71/online-retail-churn:latest
+```
 
 ## Monitoring
 
