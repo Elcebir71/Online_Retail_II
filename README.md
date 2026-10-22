@@ -8,7 +8,7 @@
 End-to-end MLOps project that predicts which customers of an online retailer will churn,
 so marketing can target them with win-back campaigns.
 
-**Stack:** scikit-learn · MLflow (tracking + model registry) · FastAPI · Docker · GitHub Actions · Azure Container Apps · PSI drift monitoring
+**Stack:** scikit-learn · MLflow (tracking + model registry) · FastAPI · Docker · Kubernetes · GitHub Actions · Azure Container Apps · PSI drift monitoring
 
 ## Problem
 
@@ -47,6 +47,7 @@ src/
   monitor.py       # data drift (PSI) and performance monitoring
 model/             # exported champion model served by the API and the Docker image
 tests/             # unit tests for features and the API
+k8s/              # Kubernetes Deployment + Service (kind / minikube)
 Dockerfile
 .github/workflows/ci-cd.yml
 ```
@@ -82,6 +83,28 @@ or pull the image published by CI:
 ```bash
 docker run -it --rm -p 8000:8000 ghcr.io/elcebir71/online-retail-churn:latest
 ```
+
+### Run on Kubernetes (kind / minikube)
+
+`k8s/` contains a Deployment (2 replicas, health probes on `/health`, non-root, resource limits)
+and a ClusterIP Service for the published image.
+
+```bash
+kind create cluster --name churn          # or: minikube start
+kubectl apply -k k8s/
+kubectl rollout status deployment/churn-api
+kubectl port-forward service/churn-api 8000:80   # http://127.0.0.1:8000/docs
+```
+
+To test a locally built image instead of the GHCR one:
+
+```bash
+docker build -t churn-api:dev .
+kind load docker-image churn-api:dev --name churn     # minikube: minikube image load churn-api:dev
+kubectl set image deployment/churn-api churn-api=churn-api:dev
+```
+
+Clean up with `kubectl delete -k k8s/` and `kind delete cluster --name churn`.
 
 Example request:
 

@@ -33,6 +33,11 @@ jobs:
       - name: Run tests
         run: pytest -v
 
+      - name: Validate Kubernetes manifests
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          kubectl kustomize k8s | ./kubeconform -strict -summary -
+
   docker:
     name: Build, smoke test and publish image
     needs: test

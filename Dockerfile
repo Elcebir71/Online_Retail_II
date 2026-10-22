@@ -20,9 +20,9 @@ RUN sed -e 's/^mlflow==/mlflow-skinny==/' -e '/^pytest/d' model/requirements.txt
 COPY src/ src/
 COPY model/ model/
 
-# Run as a non-root user
-RUN useradd --create-home appuser
-USER appuser
+# Run as a non-root user (numeric UID so Kubernetes runAsNonRoot can verify it)
+RUN useradd --create-home --uid 1000 appuser
+USER 1000
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
