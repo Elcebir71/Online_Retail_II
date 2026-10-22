@@ -91,7 +91,7 @@ curl -X POST http://127.0.0.1:8000/predict \
 ```
 
 ```json
-{"model_version": "2", "predictions": [{"churn_probability": 0.1373, "churn": false}]}
+{"model_version": "6", "predictions": [{"churn_probability": 0.2943, "churn": false}]}
 ```
 
 ## CI/CD

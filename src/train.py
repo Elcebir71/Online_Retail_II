@@ -72,7 +72,7 @@ def evaluate(pipe: Pipeline, df: pd.DataFrame) -> dict[str, float]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=["logreg", "hgb"], default="hgb")
+    parser.add_argument("--model", choices=["logreg", "hgb"], default="logreg")
     parser.add_argument("--register", action="store_true", help="Register the model in the MLflow Model Registry")
     args = parser.parse_args()
 
