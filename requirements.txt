@@ -1,0 +1,23 @@
+# Data processing
+pandas>=2.2
+numpy>=1.26
+openpyxl>=3.1          # read the Online Retail II .xlsx file
+
+# Modeling and experiment tracking
+scikit-learn>=1.7
+mlflow>=3.0
+pyarrow>=17            # parquet files
+
+# Serving (API)
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+
+# Testing and code quality
+pytest>=8.3
+httpx>=0.27            # FastAPI TestClient
+ruff>=0.7
+
+# Exploratory analysis (optional)
+jupyter>=1.1
+matplotlib>=3.9
