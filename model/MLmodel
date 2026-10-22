@@ -1,4 +1,4 @@
-artifact_path: file:C:/VS-CODE/online-retail-II/mlruns/1/models/m-526b44ffb2284351b5d6a546e97bb952/artifacts
+artifact_path: file:C:/VS-CODE/online-retail-II/mlruns/1/models/m-709f4f9268a9483ca90b2ad96ffd9cee/artifacts
 flavors:
   python_function:
     env:
@@ -18,25 +18,25 @@ flavors:
     - src.features.signed_log1p
 is_signature_from_type_hint: false
 mlflow_version: 3.17.2
-model_id: m-526b44ffb2284351b5d6a546e97bb952
-model_size_bytes: 2631350
-model_uuid: m-526b44ffb2284351b5d6a546e97bb952
+model_id: m-709f4f9268a9483ca90b2ad96ffd9cee
+model_size_bytes: 165827
+model_uuid: m-709f4f9268a9483ca90b2ad96ffd9cee
 prompts: null
-run_id: e5f89f5a3eda41e0b1c11bbac0067fcd
+run_id: 6fff34253a49490a991b165ffb756027
 saved_input_example_info:
   artifact_path: input_example.json
   pandas_orient: split
   serving_input_path: serving_input_example.json
   type: dataframe
 signature:
-  inputs: '[{"type": "long", "name": "recency_days", "required": true}, {"type": "long",
-    "name": "frequency", "required": true}, {"type": "double", "name": "monetary",
+  inputs: '[{"type": "double", "name": "recency_days", "required": true}, {"type":
+    "double", "name": "frequency", "required": true}, {"type": "double", "name": "monetary",
     "required": true}, {"type": "double", "name": "avg_order_value", "required": true},
-    {"type": "long", "name": "n_products", "required": true}, {"type": "long", "name":
-    "tenure_days", "required": true}, {"type": "double", "name": "return_rate", "required":
-    true}, {"type": "double", "name": "orders_last_90d", "required": true}, {"type":
-    "string", "name": "country", "required": true}]'
+    {"type": "double", "name": "n_products", "required": true}, {"type": "double",
+    "name": "tenure_days", "required": true}, {"type": "double", "name": "return_rate",
+    "required": true}, {"type": "double", "name": "orders_last_90d", "required": true},
+    {"type": "string", "name": "country", "required": true}]'
   outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1]}}]'
   params: null
 type_hint_from_example: false
-utc_time_created: '2026-10-22 14:28:06.258944'
+utc_time_created: '2026-10-22 14:43:05.590322'

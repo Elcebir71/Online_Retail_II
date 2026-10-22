@@ -1,5 +1,11 @@
 {
   "name": "churn-model",
-  "version": "2",
-  "run_id": "e5f89f5a3eda41e0b1c11bbac0067fcd"
+  "version": "6",
+  "run_id": "6fff34253a49490a991b165ffb756027",
+  "model_type": "logreg",
+  "test_metrics": {
+    "roc_auc": 0.7714291816293862,
+    "pr_auc": 0.7934772771263786,
+    "f1": 0.6875579454848878
+  }
 }
