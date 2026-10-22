@@ -24,16 +24,47 @@ number of distinct products, tenure, return rate, orders in the last 90 days, co
 
 ## Results
 
-Time-based split: train on customers as of 2010-09-09, test on customers as of 2011-09-09
-(same season one year later, no leakage from the future).
+Time-based split: train on customers as of 2010-09-09, test on 5,278 customers as of 2011-09-09
+(same season one year later, no leakage from the future). 56.8% of test customers churn, which is
+also the precision of targeting customers at random.
 
-| Model | ROC-AUC | PR-AUC | F1 |
-|---|---|---|---|
-| **Logistic regression** (served) | **0.77** | **0.79** | **0.69** |
-| HistGradientBoosting | 0.74 | 0.76 | 0.67 |
+**Model vs. simple rules** (`python -m src.evaluate`, 95% bootstrap interval in brackets):
 
-The simpler model wins: RFM features are few and close to monotonic, and its coefficients are
-easy to explain to a marketing team.
+| Ranking | ROC-AUC | PR-AUC | Precision@10% | Precision@20% | Recall@20% | Lift@20% |
+|---|---|---|---|---|---|---|
+| Recency rule (days since last purchase) | 0.762 [0.749–0.776] | 0.801 | 0.905 | 0.868 | 0.306 | 1.53 |
+| No order in the last 90 days | 0.688 [0.675–0.700] | 0.684 | 0.716 | 0.711 | 0.251 | 1.25 |
+| **Logistic regression** (served, v6) | **0.771** [0.759–0.783] | 0.793 | 0.866 | 0.839 | 0.296 | 1.48 |
+| HistGradientBoosting | 0.74 | 0.76 | | | | |
+
+**The honest reading:** the model is only **+0.009 ROC-AUC** better than ranking customers by
+recency alone, and the 95% interval of that gain (−0.003 to +0.021) includes zero. For a
+campaign aimed at the riskiest 10–20% of customers, the recency rule is even slightly more
+precise. In this dataset, *when did the customer last buy* carries almost all of the signal; the
+other RFM features add little on top. Logistic regression still beats gradient boosting, which
+overfits these few, near-monotonic features.
+
+What this means for marketing: targeting the riskiest 20% (by either the model or recency)
+reaches customers of whom ~84–87% would churn, a lift of ~1.5× over random targeting, and
+covers ~30% of all churners. The decile table shows where the budget stops paying off: from
+decile 6 on, churn rates fall below the average.
+
+| Decile (riskiest first) | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Churn rate | 86.6% | 81.2% | 77.8% | 69.1% | 65.3% | 57.6% | 52.5% | 42.2% | 26.4% | 8.9% |
+| Cumulative share of churners reached | 15% | 30% | 43% | 56% | 67% | 77% | 86% | 94% | 98% | 100% |
+
+![Cumulative gains chart](docs/gains_chart.png)
+
+The gains chart shows where the small ROC-AUC gain comes from: model and recency rule are
+indistinguishable for the riskiest ~60% of customers, and the model only pulls ahead in the
+safest ~35%, where it separates loyal customers better (the yes/no 90-day rule bends at ~63%,
+the share of customers with no recent order). That part of the ranking matters for excluding
+loyal customers from discounts, not for choosing whom to target.
+
+The value of the project is therefore less in the model's lift over a rule and more in the
+pipeline around it: versioning, serving, CI/CD and monitoring work the same way for a stronger
+model (see [Limitations](#limitations) and the roadmap).
 
 ## Project structure
 
@@ -45,6 +76,7 @@ src/
   export_model.py  # promote a version to "champion" and export it to model/
   api.py           # FastAPI service (/health, /predict)
   monitor.py       # data drift (PSI) and performance monitoring
+  evaluate.py      # model vs. rule baselines, precision@k, lift, bootstrap CIs
 model/             # exported champion model served by the API and the Docker image
 tests/             # unit tests for features and the API
 k8s/              # Kubernetes Deployment + Service (kind / minikube)
@@ -62,6 +94,7 @@ pip install -r requirements.txt
 python -m src.data                                # download and clean the data
 python -m src.train --model logreg --register     # train and register in MLflow
 python -m src.export_model --version <N>          # promote version N to champion and export
+python -m src.evaluate                            # compare with rule baselines (reports/evaluation.md)
 mlflow ui                                         # compare runs at http://127.0.0.1:5000
 ```
 
@@ -165,11 +198,32 @@ MLflow UI. `--fail-on-alert` makes the script exit with code 1, so it can gate a
 construction, because customer histories get longer as time passes. A natural next step is to
 compute them over a fixed window (e.g. the last 12 months) so the model sees stable inputs.
 
+## Limitations
+
+Known weaknesses, stated up front:
+
+- **Small gain over a simple rule.** The served model is not significantly better than ranking by
+  recency (see [Results](#results)). A stronger model needs new signal, for example product
+  categories, seasonality of individual customers, or fixed-window behaviour features.
+- **Scores are not calibrated probabilities.** The model is trained with
+  `class_weight="balanced"`, so `churn_probability` is a ranking score, and the 0.5 threshold
+  used for the `churn` flag is not tied to a business cost.
+- **Monitoring is a historical simulation.** `src/monitor.py` replays past cutoff dates from the
+  dataset. The API does not log the requests and predictions it serves, so drift on live
+  traffic is not measured yet.
+- **Cumulative features drift by design.** `tenure_days`, `frequency` and `monetary` grow as
+  customer histories get longer, which shows up as drift even when behaviour is stable.
+- **One test period.** All test metrics come from a single cutoff (2011-09-09). The bootstrap
+  intervals cover sampling noise between customers, not variation between time periods.
+
 ## Roadmap
 
 - [x] Data pipeline, churn label and model tracking with MLflow
 - [x] FastAPI service and Docker image
 - [x] CI/CD with GitHub Actions
 - [x] Data drift and performance monitoring
+- [x] Baseline comparison, precision@k, lift and bootstrap confidence intervals
+- [ ] Calibrated probabilities (or rename the output to a score)
+- [ ] Log served predictions and monitor live traffic
 - [ ] Fixed-window features to remove drift caused by growing customer histories
 - [ ] Scheduled monitoring job with automatic retraining
