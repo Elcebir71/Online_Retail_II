@@ -150,8 +150,12 @@ curl -X POST http://127.0.0.1:8000/predict \
 ```
 
 ```json
-{"model_version": "6", "predictions": [{"churn_probability": 0.2943, "churn": false}]}
+{"model_version": "6", "predictions": [{"churn_score": 0.2943, "high_risk": false}]}
 ```
+
+`churn_score` ranks customers by risk (it is not a calibrated probability, see below).
+`high_risk` is true when the score would put the customer in the riskiest 20% of the training
+customers; the cut-off is computed from `model/reference.parquet` at startup and shown by `/health`.
 
 ## CI/CD
 
@@ -205,9 +209,12 @@ Known weaknesses, stated up front:
 - **Small gain over a simple rule.** The served model is not significantly better than ranking by
   recency (see [Results](#results)). A stronger model needs new signal, for example product
   categories, seasonality of individual customers, or fixed-window behaviour features.
-- **Scores are not calibrated probabilities.** The model is trained with
-  `class_weight="balanced"`, so `churn_probability` is a ranking score, and the 0.5 threshold
-  used for the `churn` flag is not tied to a business cost.
+- **Scores are not calibrated probabilities, on purpose.** Platt scaling on the training data was
+  tried (`python -m src.train --calibration sigmoid`) and made things worse: the churn rate rises
+  from 42.4% (2010 training customers) to 56.8% (2011 test customers), so the calibrated model
+  predicts 38.6% churn on average and the Brier score worsens from 0.205 to 0.225. With two years
+  of data there is no way to calibrate on a period that resembles the next one, so the API
+  returns a ranking score and flags the top 20% instead of applying a 0.5 cut-off.
 - **Monitoring is a historical simulation.** `src/monitor.py` replays past cutoff dates from the
   dataset. The API does not log the requests and predictions it serves, so drift on live
   traffic is not measured yet.
@@ -223,7 +230,7 @@ Known weaknesses, stated up front:
 - [x] CI/CD with GitHub Actions
 - [x] Data drift and performance monitoring
 - [x] Baseline comparison, precision@k, lift and bootstrap confidence intervals
-- [ ] Calibrated probabilities (or rename the output to a score)
+- [x] Calibration tested; output renamed to a ranking score with a top-20% risk flag
 - [ ] Log served predictions and monitor live traffic
 - [ ] Fixed-window features to remove drift caused by growing customer histories
 - [ ] Scheduled monitoring job with automatic retraining

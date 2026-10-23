@@ -4,12 +4,14 @@ Time-based split: the model is trained on customers as of autumn 2010 and tested
 customers one year later (autumn 2011). This avoids the leakage from the future that
 a random split would cause, and keeps seasonality the same on both sides.
 
-The logistic regression is trained with balanced class weights, which distorts its scores, so
-it is wrapped in a calibrator (Platt scaling by default) fitted on cross-validated predictions.
-The served `churn_probability` is then an actual probability, measured with the Brier score.
+Calibration: `--calibration sigmoid` wraps the model in a calibrator (Platt scaling) fitted on
+cross-validated training predictions, and logs the Brier score before and after. It is off by
+default: the churn rate rises from 42% (train) to 57% (test), so probabilities calibrated on 2010
+underestimate 2011 churn (Brier 0.205 -> 0.225). The served model therefore returns a ranking
+score, not a probability.
 
 Usage:    python -m src.train            (first: python -m src.data)
-          python -m src.train --calibration none   # raw, uncalibrated scores
+          python -m src.train --calibration sigmoid
 Results:  mlflow ui   ->  http://127.0.0.1:5000
 """
 import argparse
@@ -69,7 +71,7 @@ def make_pipeline(model_type: str) -> Pipeline:
     return Pipeline([("pre", pre), ("model", model)])
 
 
-def make_model(model_type: str, calibration: str = "sigmoid"):
+def make_model(model_type: str, calibration: str = "none"):
     """Pipeline, optionally wrapped in a probability calibrator.
 
     ensemble=False refits one pipeline on all training data and fits the calibrator on 5-fold
@@ -98,8 +100,8 @@ def main() -> None:
     parser.add_argument(
         "--calibration",
         choices=["sigmoid", "isotonic", "none"],
-        default="sigmoid",
-        help="Probability calibration (sigmoid = Platt scaling)",
+        default="none",
+        help="Probability calibration (sigmoid = Platt scaling); off by default, see module docstring",
     )
     parser.add_argument("--register", action="store_true", help="Register the model in the MLflow Model Registry")
     args = parser.parse_args()

@@ -32,12 +32,12 @@ def client(tmp_path_factory):
         }
     )
     df[TARGET] = (df["recency_days"] > 150).astype(int)
-    # Same model type as in production: calibrated logistic regression
     pipe = make_model("logreg").fit(df[FEATURES], df[TARGET])
 
     model_dir = tmp_path_factory.mktemp("serving") / "model"
     mlflow.sklearn.save_model(pipe, str(model_dir), skops_trusted_types=TRUSTED_TYPES)
     (model_dir / "serving_meta.json").write_text(json.dumps({"version": 7}))
+    df.to_parquet(model_dir / "reference.parquet")
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("MODEL_PATH", str(model_dir))
@@ -56,6 +56,7 @@ def test_health(client):
     assert body["status"] == "ok"
     assert body["model_loaded"] is True
     assert body["model_version"] == "7"
+    assert 0 < body["high_risk_threshold"] < 1
 
 
 def test_predict(client):
@@ -66,8 +67,9 @@ def test_predict(client):
     preds = resp.json()["predictions"]
     assert resp.json()["model_version"] == "7"
     assert len(preds) == 2
-    assert all(0 <= p["churn_probability"] <= 1 for p in preds)
-    assert preds[1]["churn_probability"] > preds[0]["churn_probability"]
+    assert all(0 <= p["churn_score"] <= 1 for p in preds)
+    assert preds[1]["churn_score"] > preds[0]["churn_score"]
+    assert preds[1]["high_risk"] and not preds[0]["high_risk"]
 
 
 def test_unknown_country_is_accepted(client):
