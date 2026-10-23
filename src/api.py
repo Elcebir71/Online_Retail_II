@@ -1,4 +1,9 @@
-"""FastAPI service that returns churn probabilities for customers.
+"""FastAPI service that returns churn risk scores for customers.
+
+The score ranks customers by churn risk but is not a calibrated probability (see README,
+"Limitations"). Instead of a fixed 0.5 cut-off, `high_risk` flags customers whose score would put
+them in the riskiest 20% of the training customers, which matches how a retention campaign
+picks its target group.
 
 Run locally:  uvicorn src.api:app --reload   ->  http://127.0.0.1:8000/docs
 The model is loaded from MODEL_PATH (default: model/, created by src.export_model).
@@ -9,6 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import mlflow.sklearn
+import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
@@ -16,7 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.features import FEATURES
 
-THRESHOLD = 0.5
+HIGH_RISK_SHARE = 0.2  # flag the riskiest 20%
+FALLBACK_THRESHOLD = 0.5  # only used if the model has no reference data
 state: dict = {}
 
 
@@ -55,8 +62,8 @@ class PredictRequest(BaseModel):
 
 
 class Prediction(BaseModel):
-    churn_probability: float
-    churn: bool
+    churn_score: float = Field(description="Churn risk score in [0, 1]; higher means more likely to churn")
+    high_risk: bool = Field(description="Score is in the top 20% of the training customers")
 
 
 class PredictResponse(BaseModel):
@@ -68,6 +75,12 @@ def load_model(path: Path) -> None:
     state["model"] = mlflow.sklearn.load_model(str(path))
     meta_path = path / "serving_meta.json"
     state["version"] = str(json.loads(meta_path.read_text())["version"]) if meta_path.exists() else None
+    ref_path = path / "reference.parquet"
+    if ref_path.exists():
+        ref_scores = state["model"].predict_proba(pd.read_parquet(ref_path)[FEATURES])[:, 1]
+        state["threshold"] = float(np.quantile(ref_scores, 1 - HIGH_RISK_SHARE))
+    else:
+        state["threshold"] = FALLBACK_THRESHOLD
 
 
 @asynccontextmanager
@@ -87,7 +100,12 @@ def root() -> RedirectResponse:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "model_loaded": "model" in state, "model_version": state.get("version")}
+    return {
+        "status": "ok",
+        "model_loaded": "model" in state,
+        "model_version": state.get("version"),
+        "high_risk_threshold": round(state["threshold"], 4) if "threshold" in state else None,
+    }
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -98,5 +116,7 @@ def predict(request: PredictRequest) -> PredictResponse:
     proba = state["model"].predict_proba(df)[:, 1]
     return PredictResponse(
         model_version=state["version"],
-        predictions=[Prediction(churn_probability=round(float(p), 4), churn=bool(p >= THRESHOLD)) for p in proba],
+        predictions=[
+            Prediction(churn_score=round(float(p), 4), high_risk=bool(p >= state["threshold"])) for p in proba
+        ],
     )
