@@ -4,7 +4,12 @@ Time-based split: the model is trained on customers as of autumn 2010 and tested
 customers one year later (autumn 2011). This avoids the leakage from the future that
 a random split would cause, and keeps seasonality the same on both sides.
 
+The logistic regression is trained with balanced class weights, which distorts its scores, so
+it is wrapped in a calibrator (Platt scaling by default) fitted on cross-validated predictions.
+The served `churn_probability` is then an actual probability, measured with the Brier score.
+
 Usage:    python -m src.train            (first: python -m src.data)
+          python -m src.train --calibration none   # raw, uncalibrated scores
 Results:  mlflow ui   ->  http://127.0.0.1:5000
 """
 import argparse
@@ -15,10 +20,11 @@ import mlflow
 import mlflow.sklearn
 import pandas as pd
 from mlflow.models import infer_signature
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, f1_score, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
@@ -40,6 +46,8 @@ MODEL_NAME = "churn-model"
 TRUSTED_TYPES = [
     "sklearn.ensemble._hist_gradient_boosting.predictor.TreePredictor",
     "src.features.signed_log1p",
+    "sklearn.calibration._CalibratedClassifier",
+    "sklearn.calibration._SigmoidCalibration",
 ]
 
 
@@ -61,18 +69,38 @@ def make_pipeline(model_type: str) -> Pipeline:
     return Pipeline([("pre", pre), ("model", model)])
 
 
-def evaluate(pipe: Pipeline, df: pd.DataFrame) -> dict[str, float]:
-    proba = pipe.predict_proba(df[FEATURES])[:, 1]
+def make_model(model_type: str, calibration: str = "sigmoid"):
+    """Pipeline, optionally wrapped in a probability calibrator.
+
+    ensemble=False refits one pipeline on all training data and fits the calibrator on 5-fold
+    out-of-fold predictions. Sigmoid calibration is monotonic, so the ranking (ROC-AUC, lift)
+    stays exactly the same; only the probability values change.
+    """
+    pipe = make_pipeline(model_type)
+    if calibration == "none":
+        return pipe
+    return CalibratedClassifierCV(pipe, method=calibration, cv=5, ensemble=False)
+
+
+def evaluate(model, df: pd.DataFrame) -> dict[str, float]:
+    proba = model.predict_proba(df[FEATURES])[:, 1]
     return {
         "roc_auc": roc_auc_score(df[TARGET], proba),
         "pr_auc": average_precision_score(df[TARGET], proba),
         "f1": f1_score(df[TARGET], proba >= 0.5),
+        "brier": brier_score_loss(df[TARGET], proba),
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=["logreg", "hgb"], default="logreg")
+    parser.add_argument(
+        "--calibration",
+        choices=["sigmoid", "isotonic", "none"],
+        default="sigmoid",
+        help="Probability calibration (sigmoid = Platt scaling)",
+    )
     parser.add_argument("--register", action="store_true", help="Register the model in the MLflow Model Registry")
     args = parser.parse_args()
 
@@ -85,6 +113,7 @@ def main() -> None:
         mlflow.log_params(
             {
                 "model_type": args.model,
+                "calibration": args.calibration,
                 "train_cutoff": TRAIN_CUTOFF,
                 "test_cutoff": TEST_CUTOFF,
                 "horizon_days": HORIZON_DAYS,
@@ -94,9 +123,14 @@ def main() -> None:
                 "test_churn_rate": round(test[TARGET].mean(), 4),
             }
         )
-        pipe = make_pipeline(args.model).fit(train[FEATURES], train[TARGET])
+        pipe = make_model(args.model, args.calibration).fit(train[FEATURES], train[TARGET])
         metrics = evaluate(pipe, test)
         mlflow.log_metrics({f"test_{k}": v for k, v in metrics.items()})
+        if args.calibration != "none":
+            # Same pipeline before calibration, to show what calibration changed
+            raw = evaluate(pipe.calibrated_classifiers_[0].estimator, test)
+            mlflow.log_metric("test_brier_uncalibrated", raw["brier"])
+            print(f"  brier before calibration: {raw['brier']:.3f}")
 
         # Store the reference data (training set) with the model for drift monitoring
         with tempfile.TemporaryDirectory() as tmp:

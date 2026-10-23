@@ -12,9 +12,13 @@ ROC-AUC alone does not say whether a model is worth deploying. This script answe
 Uncertainty: 95% confidence intervals from a paired bootstrap over test customers, including the
 ROC-AUC gain of the model over the recency rule.
 
+Calibration: does a predicted churn probability of 70% mean that ~70% of those customers churn?
+Reported as the Brier score, the mean predicted vs. actual churn rate, and a reliability chart.
+
 Usage:
     python -m src.evaluate
-Writes reports/evaluation.md (tables for the README) and reports/gains_chart.png.
+Writes reports/evaluation.md (tables for the README), reports/gains_chart.png and
+reports/calibration_chart.png.
 """
 import argparse
 import json
@@ -23,7 +27,7 @@ from pathlib import Path
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 from src.data import PROCESSED_PATH
 from src.features import FEATURES, TARGET, build_dataset
@@ -160,8 +164,59 @@ def plot_gains(y: np.ndarray, scores: dict[str, np.ndarray], path: Path) -> None
     plt.close(fig)
 
 
+def calibration_summary(y: np.ndarray, proba: np.ndarray) -> dict[str, float]:
+    brier = brier_score_loss(y, proba)
+    # Reference: always predicting the observed churn rate (knows the base rate, but cannot rank)
+    brier_base_rate = y.mean() * (1 - y.mean())
+    return {
+        "brier": brier,
+        "brier_skill": 1 - brier / brier_base_rate,
+        "mean_predicted": proba.mean(),
+        "actual_rate": y.mean(),
+    }
+
+
+def calibration_table(y: np.ndarray, proba: np.ndarray, n_bins: int = 10) -> pd.DataFrame:
+    """Customers split into equal-size groups by predicted probability (low to high)."""
+    order = np.argsort(proba, kind="stable")
+    rows = [
+        {"customers": len(idx), "mean_predicted": proba[idx].mean(), "actual_rate": y[idx].mean()}
+        for idx in np.array_split(order, n_bins)
+    ]
+    return pd.DataFrame(rows)
+
+
+def plot_calibration(table: pd.DataFrame, path: Path) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(5.5, 5))
+    ax.plot([0, 1], [0, 1], "k--", lw=1, label="Perfect calibration")
+    ax.plot(table["mean_predicted"], table["actual_rate"], "o-", label="Served model")
+    ax.set(
+        xlabel="Mean predicted churn probability (per decile)",
+        ylabel="Actual churn rate",
+        title=f"Calibration on the hold-out set ({TEST_CUTOFF})",
+        xlim=(0, 1),
+        ylim=(0, 1),
+    )
+    ax.legend(loc="upper left")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
 def render_markdown(
-    point: dict[str, dict[str, float]], boot: dict, lifts: pd.DataFrame, model_name: str, n: int, churn_rate: float
+    point: dict[str, dict[str, float]],
+    boot: dict,
+    lifts: pd.DataFrame,
+    model_name: str,
+    n: int,
+    churn_rate: float,
+    calibration: dict[str, float],
+    calibration_bins: pd.DataFrame,
 ) -> str:
     header = "| Model | " + " | ".join(METRIC_LABELS.values()) + " |"
     lines = [
@@ -196,6 +251,21 @@ def render_markdown(
         lines.append(
             f"| {r.decile} | {r.customers} | {r.churners} | {r.churn_rate:.1%} | {r.lift:.2f} | {r.cumulative_recall:.1%} |"
         )
+    c = calibration
+    lines += [
+        "",
+        f"Calibration, {model_name.lower()}:",
+        "",
+        (
+            f"- Brier score: {c['brier']:.3f} (always predicting the churn rate: "
+            f"{c['actual_rate'] * (1 - c['actual_rate']):.3f}, skill score {c['brier_skill']:.2f})"
+        ),
+        f"- Mean predicted churn probability: {c['mean_predicted']:.1%}, actual churn rate: {c['actual_rate']:.1%}",
+        "",
+        "| Predicted (decile mean) | " + " | ".join(f"{v:.0%}" for v in calibration_bins["mean_predicted"]) + " |",
+        "|---" * (len(calibration_bins) + 1) + "|",
+        "| Actual churn rate | " + " | ".join(f"{v:.0%}" for v in calibration_bins["actual_rate"]) + " |",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -223,14 +293,20 @@ def main() -> None:
     point = {name: compute_metrics(y, s) for name, s in scores.items()}
     boot = bootstrap(y, scores, n_boot=args.n_boot)
     lifts = lift_table(y, scores[model_name])
+    calibration = calibration_summary(y, scores[model_name])
+    calibration_bins = calibration_table(y, scores[model_name])
 
     REPORT_DIR.mkdir(exist_ok=True)
     md_path = REPORT_DIR / "evaluation.md"
-    md_path.write_text(render_markdown(point, boot, lifts, model_name, len(y), y.mean()), encoding="utf-8")
+    md_path.write_text(
+        render_markdown(point, boot, lifts, model_name, len(y), y.mean(), calibration, calibration_bins),
+        encoding="utf-8",
+    )
     plot_gains(y, scores, REPORT_DIR / "gains_chart.png")
+    plot_calibration(calibration_bins, REPORT_DIR / "calibration_chart.png")
 
     print(md_path.read_text(encoding="utf-8"))
-    print(f"Written to {md_path} and {REPORT_DIR / 'gains_chart.png'}")
+    print(f"Written to {md_path}, {REPORT_DIR / 'gains_chart.png'} and {REPORT_DIR / 'calibration_chart.png'}")
 
 
 if __name__ == "__main__":

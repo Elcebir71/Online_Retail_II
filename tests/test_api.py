@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from src.api import Customer, app
 from src.features import FEATURES, TARGET
-from src.train import TRUSTED_TYPES, make_pipeline
+from src.train import TRUSTED_TYPES, make_model
 
 EXAMPLE = Customer.model_config["json_schema_extra"]["example"]
 
@@ -32,7 +32,8 @@ def client(tmp_path_factory):
         }
     )
     df[TARGET] = (df["recency_days"] > 150).astype(int)
-    pipe = make_pipeline("logreg").fit(df[FEATURES], df[TARGET])
+    # Same model type as in production: calibrated logistic regression
+    pipe = make_model("logreg").fit(df[FEATURES], df[TARGET])
 
     model_dir = tmp_path_factory.mktemp("serving") / "model"
     mlflow.sklearn.save_model(pipe, str(model_dir), skops_trusted_types=TRUSTED_TYPES)

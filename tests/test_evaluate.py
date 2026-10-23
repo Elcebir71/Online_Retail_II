@@ -1,7 +1,15 @@
 import numpy as np
 import pytest
 
-from src.evaluate import bootstrap, compute_metrics, lift_table, rank_order, top_k_metrics
+from src.evaluate import (
+    bootstrap,
+    calibration_summary,
+    calibration_table,
+    compute_metrics,
+    lift_table,
+    rank_order,
+    top_k_metrics,
+)
 
 rng = np.random.default_rng(0)
 
@@ -41,3 +49,13 @@ def test_bootstrap_interval_contains_point_estimate():
     assert low <= compute_metrics(y, scores["model"])["roc_auc"] <= high
     gain_low, _ = boot["auc_gain_vs_reference"]["model"]
     assert gain_low > 0  # the informative model clearly beats the random baseline
+
+
+def test_calibration_of_perfectly_calibrated_scores():
+    proba = rng.random(20000)
+    y = (rng.random(20000) < proba).astype(int)
+    summary = calibration_summary(y, proba)
+    assert summary["mean_predicted"] == pytest.approx(summary["actual_rate"], abs=0.02)
+    assert summary["brier_skill"] > 0
+    table = calibration_table(y, proba)
+    assert np.allclose(table["mean_predicted"], table["actual_rate"], atol=0.05)
