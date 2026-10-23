@@ -1,7 +1,13 @@
 """Monitor data drift and model performance against the training reference.
 
-For each monitoring cutoff, the script rebuilds the customer features as of that date and
-compares them with the training snapshot stored next to the served model (reference.parquet):
+Two sources for the "current" data:
+
+- Historical simulation (--cutoff): rebuild the customer features from the dataset as of past
+  dates. Churn labels are known, so performance can be tracked as well.
+- Live traffic (--prediction-log): the customers the API actually scored, read from its
+  prediction log. Labels are not known yet, so only drift is measured.
+
+Both are compared with the training snapshot stored next to the served model (reference.parquet):
 
 - Data drift: Population Stability Index (PSI) per feature and for the predicted probability.
 - Performance: ROC-AUC / PR-AUC once the 90-day churn labels for the period are known.
@@ -11,6 +17,7 @@ If drift or the performance drop crosses a threshold, the report recommends retr
 Usage:
     python -m src.monitor --cutoff 2010-12-01 2011-03-01 2011-06-01 2011-09-09
     python -m src.monitor --cutoff 2011-09-09 --fail-on-alert   # exit code 1 on alert (for CI/cron)
+    python -m src.monitor --prediction-log logs/predictions.jsonl
 Reports are written to reports/ and logged to MLflow.
 """
 import argparse
@@ -46,6 +53,8 @@ PSI_DRIFT = 0.25
 # Alert when ROC-AUC drops more than this below the reference (training period) score
 MAX_AUC_DROP = 0.05
 EPS = 1e-4
+# Below this many scored customers, PSI on ten bins is too noisy to act on
+MIN_LIVE_ROWS = 200
 
 
 def psi_numeric(reference: pd.Series, current: pd.Series, bins: int = 10) -> float:
@@ -139,9 +148,21 @@ def evaluate_period(
         current = build_features(tx, pd.Timestamp(cutoff))
     current = current.assign(churn_probability=model.predict_proba(current[FEATURES])[:, 1])
 
+    perf = scores(current) if labels_known else None
+    churn_rate = round(float(current[TARGET].mean()), 4) if labels_known else None
+    return _compare(reference, current, cutoff, perf, ref_perf, churn_rate)
+
+
+def _compare(
+    reference: pd.DataFrame,
+    current: pd.DataFrame,
+    period: str,
+    perf: dict[str, float] | None,
+    ref_perf: dict[str, float],
+    churn_rate: float | None,
+) -> tuple[MonitoringResult, pd.DataFrame]:
     table = drift_table(reference, current)
     drifted = table.loc[(table["status"] == "drift") & (table["feature"] != "churn_probability"), "feature"].tolist()
-    perf = scores(current) if labels_known else None
 
     alerts = []
     if drifted:
@@ -153,15 +174,37 @@ def evaluate_period(
         alerts.append(f"ROC-AUC dropped from {ref_perf['roc_auc']:.3f} to {perf['roc_auc']:.3f}")
 
     result = MonitoringResult(
-        cutoff=cutoff,
+        cutoff=period,
         n_customers=len(current),
-        churn_rate=round(float(current[TARGET].mean()), 4) if labels_known else None,
+        churn_rate=churn_rate,
         performance=perf,
         reference_performance=ref_perf,
         drifted_features=drifted,
         alerts=alerts,
     )
     return result, table
+
+
+def read_prediction_log(path: Path, since: str | None = None) -> pd.DataFrame:
+    """Customers scored by the API (one JSON line each), optionally only those after `since`."""
+    log = pd.read_json(path, lines=True, dtype=False)
+    log["timestamp"] = pd.to_datetime(log["timestamp"], utc=True)
+    if since:
+        log = log[log["timestamp"] >= pd.Timestamp(since, tz="UTC")]
+    return log
+
+
+def evaluate_live(
+    model, reference: pd.DataFrame, log: pd.DataFrame, baseline: dict[str, float] | None = None
+) -> tuple[MonitoringResult, pd.DataFrame]:
+    """Drift between the training snapshot and the traffic the API actually served."""
+    reference = reference.assign(churn_probability=model.predict_proba(reference[FEATURES])[:, 1])
+    ref_perf = baseline or scores(reference)
+    # Use the scores the API returned, i.e. exactly what consumers of the service saw
+    current = log[FEATURES].assign(churn_probability=log["churn_score"])
+    start, end = log["timestamp"].min(), log["timestamp"].max()
+    period = f"live {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} UTC"
+    return _compare(reference, current, period, None, ref_perf, None)
 
 
 def render_html(result: MonitoringResult, table: pd.DataFrame) -> str:
@@ -186,7 +229,7 @@ def render_html(result: MonitoringResult, table: pd.DataFrame) -> str:
 table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ddd;padding:6px;text-align:left}}</style>
 </head><body>
 <h1>Churn model monitoring</h1>
-<p>Cutoff <b>{result.cutoff}</b> &middot; {result.n_customers:,} customers
+<p>Period <b>{result.cutoff}</b> &middot; {result.n_customers:,} customers
 &middot; churn rate {result.churn_rate if result.churn_rate is not None else "not known yet"}</p>
 {verdict}
 <h2>Performance</h2>
@@ -202,7 +245,10 @@ table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ddd;
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cutoff", nargs="+", required=True, help="One or more monitoring dates (YYYY-MM-DD)")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--cutoff", nargs="+", help="Historical simulation: one or more dates (YYYY-MM-DD)")
+    source.add_argument("--prediction-log", type=Path, help="Live traffic: the API's JSON lines prediction log")
+    parser.add_argument("--since", help="With --prediction-log: only predictions from this date (YYYY-MM-DD)")
     parser.add_argument("--model-path", type=Path, default=MODEL_PATH)
     parser.add_argument("--fail-on-alert", action="store_true", help="Exit with code 1 if any period raises an alert")
     args = parser.parse_args()
@@ -212,23 +258,35 @@ def main() -> None:
     baseline = baseline_performance(args.model_path)
     if baseline is None:
         print("No hold-out baseline in serving_meta.json; comparing against in-sample training scores.")
-    tx = pd.read_parquet(PROCESSED_PATH)
     REPORT_DIR.mkdir(exist_ok=True)
     mlflow.set_experiment(EXPERIMENT)
 
+    if args.prediction_log:
+        log = read_prediction_log(args.prediction_log, args.since)
+        if log.empty:
+            sys.exit(f"No predictions in {args.prediction_log}" + (f" since {args.since}" if args.since else ""))
+        if len(log) < MIN_LIVE_ROWS:
+            print(f"Only {len(log)} scored customers; PSI is unreliable below {MIN_LIVE_ROWS}.")
+        periods = [("live", lambda: evaluate_live(model, reference, log, baseline))]
+    else:
+        tx = pd.read_parquet(PROCESSED_PATH)
+        periods = [(c, lambda c=c: evaluate_period(model, reference, tx, c, baseline)) for c in args.cutoff]
+
     any_alert = False
-    for cutoff in args.cutoff:
-        result, table = evaluate_period(model, reference, tx, cutoff, baseline)
-        html_path = REPORT_DIR / f"monitoring_{cutoff}.html"
-        json_path = REPORT_DIR / f"monitoring_{cutoff}.json"
+    for name, evaluate in periods:
+        result, table = evaluate()
+        cutoff = result.cutoff
+        html_path = REPORT_DIR / f"monitoring_{name}.html"
+        json_path = REPORT_DIR / f"monitoring_{name}.json"
         html_path.write_text(render_html(result, table), encoding="utf-8")
         json_path.write_text(
             json.dumps({**asdict(result), "retrain": result.retrain, "psi": table.to_dict("records")}, indent=2),
             encoding="utf-8",
         )
 
-        with mlflow.start_run(run_name=f"monitor-{cutoff}"):
+        with mlflow.start_run(run_name=f"monitor-{name}"):
             mlflow.log_param("cutoff", cutoff)
+            mlflow.log_metric("n_customers", result.n_customers)
             mlflow.log_metrics({f"psi_{r.feature}": r.psi for r in table.itertuples()})
             mlflow.log_metric("n_drifted_features", len(result.drifted_features))
             mlflow.log_metric("retrain", int(result.retrain))

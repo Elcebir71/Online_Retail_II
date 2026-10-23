@@ -5,12 +5,20 @@ The score ranks customers by churn risk but is not a calibrated probability (see
 them in the riskiest 20% of the training customers, which matches how a retention campaign
 picks its target group.
 
+Every scored customer is appended to a JSON lines file (PREDICTION_LOG, default
+logs/predictions.jsonl; set it to an empty string to disable), so that `python -m src.monitor
+--prediction-log` can measure drift on the traffic the service actually receives.
+
 Run locally:  uvicorn src.api:app --reload   ->  http://127.0.0.1:8000/docs
 The model is loaded from MODEL_PATH (default: model/, created by src.export_model).
 """
 import json
+import logging
 import os
+import threading
+import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import mlflow.sklearn
@@ -25,6 +33,8 @@ from src.features import FEATURES
 HIGH_RISK_SHARE = 0.2  # flag the riskiest 20%
 FALLBACK_THRESHOLD = 0.5  # only used if the model has no reference data
 state: dict = {}
+logger = logging.getLogger("churn_api")
+_log_lock = threading.Lock()  # requests are served from a thread pool
 
 
 class Customer(BaseModel):
@@ -83,9 +93,32 @@ def load_model(path: Path) -> None:
         state["threshold"] = FALLBACK_THRESHOLD
 
 
+def log_predictions(df: pd.DataFrame, scores, high_risk) -> None:
+    """Append one JSON line per scored customer. Logging must never break a prediction."""
+    path = state.get("log_path")
+    if not path:
+        return
+    request_id = uuid.uuid4().hex
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+    records = df.assign(churn_score=scores, high_risk=high_risk).to_dict("records")
+    lines = "".join(
+        json.dumps({"timestamp": timestamp, "request_id": request_id, "model_version": state["version"], **r}) + "\n"
+        for r in records
+    )
+    try:
+        with _log_lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(lines)
+    except OSError:
+        logger.exception("Could not write prediction log to %s", path)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_model(Path(os.getenv("MODEL_PATH", "model")))
+    log_path = os.getenv("PREDICTION_LOG", "logs/predictions.jsonl")
+    state["log_path"] = Path(log_path) if log_path else None
     yield
     state.clear()
 
@@ -113,10 +146,10 @@ def predict(request: PredictRequest) -> PredictResponse:
     if "model" not in state:
         raise HTTPException(status_code=503, detail="Model is not loaded")
     df = pd.DataFrame([c.model_dump() for c in request.customers])[FEATURES]
-    proba = state["model"].predict_proba(df)[:, 1]
+    scores = state["model"].predict_proba(df)[:, 1].round(4)
+    high_risk = scores >= state["threshold"]
+    log_predictions(df, scores, high_risk)
     return PredictResponse(
         model_version=state["version"],
-        predictions=[
-            Prediction(churn_score=round(float(p), 4), high_risk=bool(p >= state["threshold"])) for p in proba
-        ],
+        predictions=[Prediction(churn_score=float(s), high_risk=bool(h)) for s, h in zip(scores, high_risk)],
     )
