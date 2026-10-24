@@ -177,12 +177,13 @@ curl -X POST http://127.0.0.1:8000/predict \
 ```
 
 ```json
-{"model_version": "6", "predictions": [{"churn_score": 0.2943, "high_risk": false}]}
+{"model_version": "9", "predictions": [{"churn_score": 0.2302, "high_risk": false}]}
 ```
 
-`churn_score` ranks customers by risk (it is not a calibrated probability, see below).
-`high_risk` is true when the score would put the customer in the riskiest 20% of the training
-customers; the cut-off is computed from `model/reference.parquet` at startup and shown by `/health`.
+`churn_score` is a calibrated churn probability for the next 90 days. `high_risk` is true when
+the score would put the customer in the riskiest 20% of the training customers; the cut-off
+(0.594 for v9) is computed from `model/reference.parquet` at startup. `/health` shows it together
+with `lookback_days`, the window over which clients must compute the features (270 days).
 
 ## CI/CD
 
