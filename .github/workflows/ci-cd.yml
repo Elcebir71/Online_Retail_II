@@ -163,7 +163,7 @@ jobs:
       - name: Deploy the image of this commit
         run: |
           az containerapp update --name "$AZURE_CONTAINER_APP" --resource-group "$AZURE_RESOURCE_GROUP" \
-            --image "$IMAGE_NAME:${{ github.sha }}" --output none
+            --image "$IMAGE_NAME:${{ github.sha }}" --min-replicas 0 --max-replicas 1 --output none
 
       - name: Check the live service
         run: |
