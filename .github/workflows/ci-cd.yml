@@ -74,6 +74,8 @@ jobs:
                  "n_products": 38, "tenure_days": 300, "return_rate": 0.02, "orders_last_90d": 1,
                  "country": "United Kingdom"}]}'
           echo
+          # The non-root user must be able to write the prediction log
+          docker exec churn-api test -s /app/logs/predictions.jsonl
 
       - name: Show container logs on failure
         if: failure()

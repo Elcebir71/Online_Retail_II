@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api import Customer, app
+from src.api import Customer, app, state
 from src.features import FEATURES, TARGET
 from src.train import TRUSTED_TYPES, make_model
 
@@ -41,6 +41,7 @@ def client(tmp_path_factory):
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("MODEL_PATH", str(model_dir))
+        mp.setenv("PREDICTION_LOG", str(model_dir.parent / "logs" / "predictions.jsonl"))
         with TestClient(app) as c:
             yield c
 
@@ -80,3 +81,15 @@ def test_unknown_country_is_accepted(client):
 def test_invalid_input_is_rejected(client):
     assert client.post("/predict", json={"customers": [{**EXAMPLE, "return_rate": 3}]}).status_code == 422
     assert client.post("/predict", json={"customers": []}).status_code == 422
+
+
+
+def test_predictions_are_logged(client):
+    log_path = state["log_path"]
+    before = log_path.read_text().count("\n") if log_path.exists() else 0
+    client.post("/predict", json={"customers": [EXAMPLE, {**EXAMPLE, "recency_days": 200}]})
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == before + 2
+    record = json.loads(lines[-1])
+    assert record["recency_days"] == 200
+    assert {"timestamp", "request_id", "model_version", "churn_score", "high_risk"} <= record.keys()

@@ -13,3 +13,5 @@ notebooks/
 .ruff_cache/
 .vscode/
 .env
+logs/
+reports/

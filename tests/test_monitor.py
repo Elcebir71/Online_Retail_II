@@ -58,3 +58,31 @@ def test_baseline_performance_missing(tmp_path):
     assert baseline_performance(tmp_path) is None
     (tmp_path / "serving_meta.json").write_text(json.dumps({"version": "2"}))
     assert baseline_performance(tmp_path) is None
+
+
+def test_evaluate_live_reads_api_prediction_log(tmp_path):
+    from sklearn.dummy import DummyClassifier
+
+    from src.features import FEATURES
+    from src.monitor import evaluate_live, read_prediction_log
+
+    n = 500
+    reference = pd.DataFrame({f: rng.normal(0, 1, n) for f in FEATURES})
+    reference["country"] = "United Kingdom"
+    log = reference.assign(
+        recency_days=reference["recency_days"] + 3,  # shifted feature
+        churn_score=rng.random(n),
+        high_risk=False,
+        model_version="6",
+        request_id="abc",
+        timestamp="2026-10-23T06:00:00+00:00",
+    )
+    log_path = tmp_path / "predictions.jsonl"
+    log.to_json(log_path, orient="records", lines=True)
+
+    model = DummyClassifier(strategy="uniform", random_state=0).fit(reference[FEATURES], rng.integers(0, 2, n))
+    result, _ = evaluate_live(model, reference, read_prediction_log(log_path), {"roc_auc": 0.77, "pr_auc": 0.79})
+    assert result.n_customers == n
+    assert result.performance is None
+    assert result.drifted_features == ["recency_days"]
+    assert read_prediction_log(log_path, since="2026-10-24").empty

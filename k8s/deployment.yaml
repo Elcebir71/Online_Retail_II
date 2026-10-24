@@ -50,7 +50,15 @@ spec:
               path: /health
               port: http
             periodSeconds: 30
+          # Prediction log for drift monitoring. emptyDir lives as long as the pod; in production,
+          # use a PersistentVolumeClaim or ship stdout/files to a log store instead.
+          volumeMounts:
+            - name: prediction-logs
+              mountPath: /app/logs
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: prediction-logs
+          emptyDir: {}
