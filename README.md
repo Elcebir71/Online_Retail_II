@@ -85,6 +85,22 @@ fairer.
 | Full history (v6) | 5,278 | 56.8% | 0.771 | 0.762 | +0.009 [−0.003, +0.021] |
 | Last 270 days (v9) | 3,223 | 42.5% | 0.745 | 0.684 | **+0.061** [+0.044, +0.077] |
 
+## Comparison with related work
+
+Published churn models often report 91–99% accuracy, against ROC-AUC 0.745 here. The gap comes
+from the evaluation setup, not from better models. `python -m src.compare_methods` reproduces
+the setups on this dataset and tests the published methods under the time-based split.
+
+| Study | Data | Reported | Why it is not comparable |
+|---|---|---|---|
+| Hybrid RFM + Deep Embedded Clustering + LSTM/GRU ([Scientific Reports, 2026](https://www.nature.com/articles/s41598-026-53220-0)) | UCI Online Retail (the 2010–2011 part of this dataset) | 99.65% accuracy (LSTM), ROC-AUC 0.99996 for logistic regression | Churn is defined as `Recency > 90 days` and Recency is also a model input, so the model re-learns its own label rule. No cutoff date and no future window, random split. |
+| Enhanced Customer Churn Prediction in Banking: ANOVA, PCA, SMOTE, RF/XGBoost/SVM | UCI Bank Marketing (bank-additional) | 91.18% accuracy, ROC-AUC 0.94 (XGBoost) | Term-deposit subscription, not churn. 89% of clients answer "no", so always predicting "no" already scores 89%. The `duration` field is only known after the call ends (a leak, as the [dataset's EDA](https://alexkataev.medium.com/uci-bank-marketing-dataset-part-1-exploratory-data-analysis-eda-f3108f3982b4) also notes). Random split, although the "yes" rate changes year by year. |
+| Bank churn with SMOTE + genetic-algorithm feature selection, RF/KNN/ANN/AdaBoost | Static bank customer table (no transactions) | 96% accuracy, precision and F1 (KNN) | Equal accuracy, precision and F1 suggest metrics on oversampled, balanced data. If SMOTE runs before the split, synthetic copies of test customers end up in training, which favours KNN in particular. No ROC-AUC on the real class mix, no baseline. |
+
+The three experiments, on this dataset (results: `reports/comparison.md`):
+
+RESULTS_PLACEHOLDER
+
 ## Project structure
 
 ```
@@ -97,6 +113,7 @@ src/
   monitor.py       # data drift (PSI) and performance monitoring (dataset or API prediction log)
   replay.py        # send real customers to the API to simulate traffic
   evaluate.py      # model vs. rule baselines, precision@k, lift, bootstrap CIs
+  compare_methods.py  # published setups and methods (leaky label, SMOTE, RF, KNN, SVM, ...) in our setup
 model/             # exported champion model served by the API and the Docker image
 tests/             # unit tests for features and the API
 k8s/              # Kubernetes Deployment + Service (kind / minikube)
@@ -115,6 +132,7 @@ python -m src.data                                # download and clean the data
 python -m src.train --model logreg --register     # train and register in MLflow
 python -m src.export_model --version <N>          # promote version N to champion and export
 python -m src.evaluate                            # compare with rule baselines (reports/evaluation.md)
+python -m src.compare_methods                     # published setups and methods vs. ours (reports/comparison.md)
 mlflow ui                                         # compare runs at http://127.0.0.1:5000
 ```
 
@@ -329,4 +347,5 @@ Known weaknesses, stated up front:
 - [x] Log served predictions and monitor drift on live traffic
 - [x] Kubernetes deploy tested in CI (kind); SHA-pinned deploy to Azure with OIDC login
 - [x] Fixed 270-day feature window: removes structural drift and makes calibration work
+- [x] Comparison with published studies: their setups and methods reproduced on this data
 - [ ] Scheduled monitoring job with automatic retraining
