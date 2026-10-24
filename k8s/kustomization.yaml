@@ -3,3 +3,8 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - service.yaml
+# Pin a commit for a reproducible deploy (CI publishes every main commit with its SHA as tag):
+#   kustomize edit set image ghcr.io/elcebir71/online-retail-churn:<commit-sha>
+images:
+  - name: ghcr.io/elcebir71/online-retail-churn
+    newTag: latest

@@ -11,6 +11,9 @@ env:
   PYTHON_VERSION: "3.14"
   # GHCR image names must be lowercase, so the owner is spelled out instead of github.repository_owner
   IMAGE_NAME: ghcr.io/elcebir71/online-retail-churn
+  AZURE_RESOURCE_GROUP: rg-rag-demo
+  AZURE_CONTAINER_APP: churn-api
+  APP_URL: https://churn-api.orangeocean-d98c39b7.swedencentral.azurecontainerapps.io
 
 jobs:
   test:
@@ -81,6 +84,42 @@ jobs:
         if: failure()
         run: docker logs churn-api
 
+      - name: Create a kind Kubernetes cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: churn
+
+      - name: Deploy the image to kind and test it
+        run: |
+          kind load docker-image churn-api:test --name churn
+          (cd k8s && kustomize edit set image ghcr.io/elcebir71/online-retail-churn=churn-api:test)
+          kubectl apply -k k8s/
+          kubectl rollout status deployment/churn-api --timeout=180s
+          kubectl port-forward service/churn-api 8080:80 &
+          for i in $(seq 1 10); do
+            curl -sf http://127.0.0.1:8080/health && break
+            sleep 2
+          done
+          echo
+          curl -sf -X POST http://127.0.0.1:8080/predict \
+            -H "Content-Type: application/json" \
+            -d '{"customers": [{"recency_days": 45, "frequency": 6, "monetary": 1250.5, "avg_order_value": 208.4,
+                 "n_products": 38, "tenure_days": 300, "return_rate": 0.02, "orders_last_90d": 1,
+                 "country": "United Kingdom"}]}'
+          echo
+          # The request went to one of the two replicas; its prediction log must exist
+          for pod in $(kubectl get pods -l app.kubernetes.io/name=churn-api -o name); do
+            kubectl exec "$pod" -- test -s /app/logs/predictions.jsonl && exit 0
+          done
+          echo "No pod wrote a prediction log" && exit 1
+
+      - name: Show Kubernetes state on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe deployment churn-api
+          kubectl logs -l app.kubernetes.io/name=churn-api --tail=50
+
       - name: Log in to GitHub Container Registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
@@ -100,3 +139,37 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
+
+  deploy:
+    name: Deploy to Azure Container Apps
+    needs: docker
+    # Runs once the Azure login variables are set (see README, "Deployment"); delete them to stop deploying
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ env.APP_URL }}/docs
+    permissions:
+      contents: read
+      id-token: write  # short-lived OIDC token for the Azure login; no stored credentials
+    steps:
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy the image of this commit
+        run: |
+          az containerapp update --name "$AZURE_CONTAINER_APP" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --image "$IMAGE_NAME:${{ github.sha }}" --output none
+
+      - name: Check the live service
+        run: |
+          # The app scales to zero, so the first request may take a while
+          for i in $(seq 1 30); do
+            curl -sf "$APP_URL/health" && exit 0
+            sleep 5
+          done
+          echo "Service did not become healthy" && exit 1
