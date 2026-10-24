@@ -137,7 +137,7 @@ The three experiments, on this dataset (results: `reports/comparison.md`):
    | KNN (k=15) + SMOTE (training data only) | 0.714 | 0.595 | 0.651 | 1.53 | +0.030 [+0.011, +0.046] |
 
 Takeaway: the 99% figures measure the label definition, not the model. In an honest setup the
-published methods land within ±0.03 ROC-AUC of a simple logistic regression, so the served model
+published methods land between −0.031 and +0.002 ROC-AUC of a simple logistic regression, so the served model
 stays the simplest, best-calibrated choice.
 
 ## Project structure
