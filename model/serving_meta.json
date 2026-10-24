@@ -1,11 +1,14 @@
 {
   "name": "churn-model",
-  "version": "6",
-  "run_id": "6fff34253a49490a991b165ffb756027",
+  "version": "9",
+  "run_id": "1c77696dcddb477898064d0294a966dd",
   "model_type": "logreg",
+  "lookback_days": 270,
   "test_metrics": {
-    "roc_auc": 0.7714291816293862,
-    "pr_auc": 0.7934772771263786,
-    "f1": 0.6875579454848878
+    "roc_auc": 0.7453405603854077,
+    "pr_auc": 0.6390608799495356,
+    "f1": 0.6176799701603879,
+    "brier": 0.20063180564495633,
+    "brier_uncalibrated": 0.20442183019906376
   }
 }

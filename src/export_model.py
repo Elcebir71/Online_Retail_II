@@ -33,7 +33,11 @@ def list_versions(client: MlflowClient) -> None:
         auc = run.data.metrics.get("test_roc_auc")
         champion = " (champion)" if str(v.version) == str(champion_version) else ""
         auc_text = f"{auc:.3f}" if auc is not None else "n/a"
-        print(f"v{v.version}  {run.data.params.get('model_type', '?'):7} test_roc_auc={auc_text}{champion}")
+        lookback = run.data.params.get("lookback_days", "full")
+        print(
+            f"v{v.version}  {run.data.params.get('model_type', '?'):7} lookback={lookback:5} "
+            f"test_roc_auc={auc_text}{champion}"
+        )
 
 
 def main() -> None:
@@ -58,11 +62,14 @@ def main() -> None:
     mlflow.artifacts.download_artifacts(run_id=version.run_id, artifact_path="reference.parquet", dst_path=str(EXPORT_DIR))
 
     run = client.get_run(version.run_id)
+    lookback = run.data.params.get("lookback_days", "full")
     meta = {
         "name": MODEL_NAME,
         "version": str(version.version),
         "run_id": version.run_id,
         "model_type": run.data.params.get("model_type"),
+        # Feature window the model expects; the API, monitor and evaluation must use the same one
+        "lookback_days": None if lookback == "full" else int(lookback),
         # Hold-out test scores from training, used as the baseline for performance monitoring
         "test_metrics": {k.removeprefix("test_"): v for k, v in run.data.metrics.items() if k.startswith("test_")},
     }

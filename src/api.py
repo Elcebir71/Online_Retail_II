@@ -28,7 +28,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.features import FEATURES
+from src.features import FEATURES, read_lookback_days
 
 HIGH_RISK_SHARE = 0.2  # flag the riskiest 20%
 FALLBACK_THRESHOLD = 0.5  # only used if the model has no reference data
@@ -38,7 +38,7 @@ _log_lock = threading.Lock()  # requests are served from a thread pool
 
 
 class Customer(BaseModel):
-    """RFM features of one customer, as of the scoring date."""
+    """RFM features of one customer as of the scoring date, over the lookback window shown by /health."""
 
     recency_days: float = Field(ge=0, description="Days since the last purchase")
     frequency: float = Field(ge=1, description="Number of distinct orders")
@@ -58,7 +58,7 @@ class Customer(BaseModel):
                 "monetary": 1250.5,
                 "avg_order_value": 208.4,
                 "n_products": 38,
-                "tenure_days": 300,
+                "tenure_days": 250,
                 "return_rate": 0.02,
                 "orders_last_90d": 1,
                 "country": "United Kingdom",
@@ -85,6 +85,7 @@ def load_model(path: Path) -> None:
     state["model"] = mlflow.sklearn.load_model(str(path))
     meta_path = path / "serving_meta.json"
     state["version"] = str(json.loads(meta_path.read_text())["version"]) if meta_path.exists() else None
+    state["lookback_days"] = read_lookback_days(path)
     ref_path = path / "reference.parquet"
     if ref_path.exists():
         ref_scores = state["model"].predict_proba(pd.read_parquet(ref_path)[FEATURES])[:, 1]
@@ -137,6 +138,8 @@ def health() -> dict:
         "status": "ok",
         "model_loaded": "model" in state,
         "model_version": state.get("version"),
+        # Window the client must compute the features over (None = full customer history)
+        "lookback_days": state.get("lookback_days"),
         "high_risk_threshold": round(state["threshold"], 4) if "threshold" in state else None,
     }
 

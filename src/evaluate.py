@@ -275,13 +275,14 @@ def main() -> None:
     parser.add_argument("--n-boot", type=int, default=1000, help="Number of bootstrap resamples")
     args = parser.parse_args()
 
-    tx = pd.read_parquet(PROCESSED_PATH)
-    test = build_dataset(tx, TEST_CUTOFF, HORIZON_DAYS)
-    y = test[TARGET].to_numpy()
-
     meta_path = args.model_path / "serving_meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     model_name = f"Served model ({meta.get('model_type', 'model')} v{meta.get('version', '?')})"
+
+    tx = pd.read_parquet(PROCESSED_PATH)
+    # Same feature window as in training; the rules are scored on the same customers as the model
+    test = build_dataset(tx, TEST_CUTOFF, HORIZON_DAYS, meta.get("lookback_days"))
+    y = test[TARGET].to_numpy()
     model = mlflow.sklearn.load_model(str(args.model_path))
 
     # The first entry is the reference baseline for the ROC-AUC gain

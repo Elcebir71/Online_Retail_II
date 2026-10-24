@@ -1,4 +1,4 @@
-artifact_path: file:C:/VS-CODE/online-retail-II/mlruns/1/models/m-709f4f9268a9483ca90b2ad96ffd9cee/artifacts
+artifact_path: file:C:/VS-CODE/online-retail-II/mlruns/1/models/m-cbce69c38e0c4da79d62337572f3d657/artifacts
 flavors:
   python_function:
     env:
@@ -16,13 +16,15 @@ flavors:
     skops_trusted_types:
     - sklearn.ensemble._hist_gradient_boosting.predictor.TreePredictor
     - src.features.signed_log1p
+    - sklearn.calibration._CalibratedClassifier
+    - sklearn.calibration._SigmoidCalibration
 is_signature_from_type_hint: false
 mlflow_version: 3.17.2
-model_id: m-709f4f9268a9483ca90b2ad96ffd9cee
-model_size_bytes: 165827
-model_uuid: m-709f4f9268a9483ca90b2ad96ffd9cee
+model_id: m-cbce69c38e0c4da79d62337572f3d657
+model_size_bytes: 288706
+model_uuid: m-cbce69c38e0c4da79d62337572f3d657
 prompts: null
-run_id: 6fff34253a49490a991b165ffb756027
+run_id: 1c77696dcddb477898064d0294a966dd
 saved_input_example_info:
   artifact_path: input_example.json
   pandas_orient: split
@@ -39,4 +41,4 @@ signature:
   outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1]}}]'
   params: null
 type_hint_from_example: false
-utc_time_created: '2026-10-22 14:43:05.590322'
+utc_time_created: '2026-10-24 19:36:22.149435'

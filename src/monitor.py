@@ -40,6 +40,7 @@ from src.features import (
     TARGET,
     build_dataset,
     build_features,
+    read_lookback_days,
 )
 
 MODEL_PATH = Path("model")
@@ -134,7 +135,12 @@ def baseline_performance(model_path: Path) -> dict[str, float] | None:
 
 
 def evaluate_period(
-    model, reference: pd.DataFrame, tx: pd.DataFrame, cutoff: str, baseline: dict[str, float] | None = None
+    model,
+    reference: pd.DataFrame,
+    tx: pd.DataFrame,
+    cutoff: str,
+    baseline: dict[str, float] | None = None,
+    lookback_days: int | None = None,
 ) -> tuple[MonitoringResult, pd.DataFrame]:
     reference = reference.assign(churn_probability=model.predict_proba(reference[FEATURES])[:, 1])
     # Scores on the training data itself are optimistic, so prefer the hold-out test baseline
@@ -142,10 +148,10 @@ def evaluate_period(
 
     labels_known = tx["invoice_date"].max() >= pd.Timestamp(cutoff) + np.timedelta64(HORIZON_DAYS - 1, "D")
     if labels_known:
-        current = build_dataset(tx, cutoff, HORIZON_DAYS)
+        current = build_dataset(tx, cutoff, HORIZON_DAYS, lookback_days)
     else:
         # Labels for this period are not observable yet: monitor drift only
-        current = build_features(tx, pd.Timestamp(cutoff))
+        current = build_features(tx, pd.Timestamp(cutoff), lookback_days)
     current = current.assign(churn_probability=model.predict_proba(current[FEATURES])[:, 1])
 
     perf = scores(current) if labels_known else None
@@ -256,6 +262,7 @@ def main() -> None:
     model = mlflow.sklearn.load_model(str(args.model_path))
     reference = pd.read_parquet(args.model_path / "reference.parquet")
     baseline = baseline_performance(args.model_path)
+    lookback = read_lookback_days(args.model_path)  # same feature window as in training
     if baseline is None:
         print("No hold-out baseline in serving_meta.json; comparing against in-sample training scores.")
     REPORT_DIR.mkdir(exist_ok=True)
@@ -270,7 +277,7 @@ def main() -> None:
         periods = [("live", lambda: evaluate_live(model, reference, log, baseline))]
     else:
         tx = pd.read_parquet(PROCESSED_PATH)
-        periods = [(c, lambda c=c: evaluate_period(model, reference, tx, c, baseline)) for c in args.cutoff]
+        periods = [(c, lambda c=c: evaluate_period(model, reference, tx, c, baseline, lookback)) for c in args.cutoff]
 
     any_alert = False
     for name, evaluate in periods:
