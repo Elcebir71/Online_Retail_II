@@ -96,8 +96,10 @@ jobs:
           kubectl apply -k k8s/
           kubectl rollout status deployment/churn-api --timeout=180s
           kubectl port-forward service/churn-api 8080:80 &
-          sleep 3
-          curl -sf http://127.0.0.1:8080/health
+          for i in $(seq 1 10); do
+            curl -sf http://127.0.0.1:8080/health && break
+            sleep 2
+          done
           echo
           curl -sf -X POST http://127.0.0.1:8080/predict \
             -H "Content-Type: application/json" \
