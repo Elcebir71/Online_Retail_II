@@ -313,6 +313,10 @@ Known weaknesses, stated up front:
   such as Azure Log Analytics.
 - **One test period.** All test metrics come from a single cutoff (2011-09-09). The bootstrap
   intervals cover sampling noise between customers, not variation between time periods.
+- **No separate validation period.** The baseline comparison, the calibration method and the
+  270-day window were all chosen by looking at results on the 2011 test set, so the test metrics
+  are somewhat optimistic. A cleaner setup would make these choices on a validation cutoff
+  (for example 2011-03-01) and use 2011-09-09 only once, for the final numbers.
 
 ## Roadmap
 
@@ -321,7 +325,7 @@ Known weaknesses, stated up front:
 - [x] CI/CD with GitHub Actions
 - [x] Data drift and performance monitoring
 - [x] Baseline comparison, precision@k, lift and bootstrap confidence intervals
-- [x] Calibration tested; output renamed to a ranking score with a top-20% risk flag
+- [x] Calibrated churn probability (Platt scaling) with a top-20% risk flag
 - [x] Log served predictions and monitor drift on live traffic
 - [x] Kubernetes deploy tested in CI (kind); SHA-pinned deploy to Azure with OIDC login
 - [x] Fixed 270-day feature window: removes structural drift and makes calibration work

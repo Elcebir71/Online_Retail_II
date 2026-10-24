@@ -1,23 +1,23 @@
 # Data processing
-pandas>=2.2
-numpy>=1.26
-openpyxl>=3.1          # read the Online Retail II .xlsx file
+pandas==2.3.3
+numpy==2.5.4
+openpyxl==3.1.5        # read the Online Retail II .xlsx file
 
 # Modeling and experiment tracking
-scikit-learn>=1.7
-mlflow>=3.0
-pyarrow>=17            # parquet files
+scikit-learn==1.7.2
+mlflow==3.17.2
+pyarrow==25.0.1        # parquet files
 
 # Serving (API)
-fastapi>=0.115
-uvicorn[standard]>=0.32
-pydantic>=2.9
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
 
 # Testing and code quality
-pytest>=8.3
-httpx2>=2.0            # FastAPI TestClient
-ruff>=0.7
+pytest==9.1.1
+httpx2==2.16.0         # FastAPI TestClient
+ruff==0.17.2
 
 # Exploratory analysis (optional)
-jupyter>=1.1
-matplotlib>=3.9
+jupyter==1.1.1
+matplotlib==3.11.2
