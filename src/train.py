@@ -43,6 +43,8 @@ from src.features import (
 TRAIN_CUTOFF = "2010-09-09"
 TEST_CUTOFF = "2011-09-09"
 HORIZON_DAYS = 90
+# History available before TRAIN_CUTOFF (data starts 2009-12-01), so the window fits both cutoffs
+DEFAULT_LOOKBACK_DAYS = 270
 EXPERIMENT = "online-retail-churn"
 MODEL_NAME = "churn-model"
 TRUSTED_TYPES = [
@@ -103,12 +105,19 @@ def main() -> None:
         default="none",
         help="Probability calibration (sigmoid = Platt scaling); off by default, see module docstring",
     )
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=DEFAULT_LOOKBACK_DAYS,
+        help="Compute features from the last N days only; 0 = full customer history",
+    )
     parser.add_argument("--register", action="store_true", help="Register the model in the MLflow Model Registry")
     args = parser.parse_args()
 
     tx = pd.read_parquet(PROCESSED_PATH)
-    train = build_dataset(tx, TRAIN_CUTOFF, HORIZON_DAYS)
-    test = build_dataset(tx, TEST_CUTOFF, HORIZON_DAYS)
+    lookback = args.lookback_days or None
+    train = build_dataset(tx, TRAIN_CUTOFF, HORIZON_DAYS, lookback)
+    test = build_dataset(tx, TEST_CUTOFF, HORIZON_DAYS, lookback)
 
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name=args.model):
@@ -119,6 +128,7 @@ def main() -> None:
                 "train_cutoff": TRAIN_CUTOFF,
                 "test_cutoff": TEST_CUTOFF,
                 "horizon_days": HORIZON_DAYS,
+                "lookback_days": lookback or "full",
                 "n_train": len(train),
                 "n_test": len(test),
                 "train_churn_rate": round(train[TARGET].mean(), 4),

@@ -1,8 +1,10 @@
+import json
+
 import pandas as pd
 import pytest
 
 from src.data import clean
-from src.features import FEATURES, TARGET, build_dataset
+from src.features import FEATURES, TARGET, build_dataset, read_lookback_days
 
 
 def _raw(rows):
@@ -57,3 +59,25 @@ def test_build_dataset(tx):
 def test_label_window_must_fit(tx):
     with pytest.raises(ValueError):
         build_dataset(tx, "2010-05-15", horizon_days=90)
+
+
+def test_lookback_window_limits_history(tx):
+    full = build_dataset(tx, "2010-03-01", horizon_days=90)
+    windowed = build_dataset(tx, "2010-03-01", horizon_days=90, lookback_days=35)
+    # The window starts on 2010-01-25; customer 2 only bought before that
+    assert set(windowed.index) == {1}
+    # Customer 1: the 2010-01-10 order falls outside the window, the 2010-02-10 order inside
+    assert windowed.loc[1, "frequency"] == 1
+    assert windowed.loc[1, "tenure_days"] == 19
+    assert full.loc[1, "tenure_days"] == 50
+
+
+def test_lookback_longer_than_data_is_rejected(tx):
+    with pytest.raises(ValueError):
+        build_dataset(tx, "2010-03-01", horizon_days=90, lookback_days=365)
+
+
+def test_read_lookback_days(tmp_path):
+    assert read_lookback_days(tmp_path) is None
+    (tmp_path / "serving_meta.json").write_text(json.dumps({"version": "8", "lookback_days": 270}))
+    assert read_lookback_days(tmp_path) == 270

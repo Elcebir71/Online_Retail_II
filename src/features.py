@@ -3,7 +3,15 @@
 Idea: pick a cutoff date. Features are computed only from transactions BEFORE the
 cutoff; the label checks whether the customer made any purchase in the
 `horizon_days` days after the cutoff (no purchase -> churn = 1).
+
+Lookback window: with the full history, cumulative features (tenure, frequency, spend) keep
+growing as the dataset gets older, so they drift even when customer behaviour does not. With
+`lookback_days`, only the last N days before the cutoff are used, so every snapshot sees the
+same amount of history. Customers without a purchase in that window are left out.
 """
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -27,9 +35,14 @@ def _days(n: int) -> np.timedelta64:
     return np.timedelta64(int(n), "D")
 
 
-def build_features(tx: pd.DataFrame, cutoff: pd.Timestamp) -> pd.DataFrame:
-    """Return one row per customer with at least one purchase before the cutoff."""
+def build_features(tx: pd.DataFrame, cutoff: pd.Timestamp, lookback_days: int | None = None) -> pd.DataFrame:
+    """Return one row per customer with at least one purchase in the history window."""
     hist = tx[tx["invoice_date"] < cutoff]
+    if lookback_days:
+        start = cutoff - _days(lookback_days)
+        if tx["invoice_date"].min() > start:
+            raise ValueError(f"Data starts after {start:%Y-%m-%d}; a {lookback_days}-day lookback is not available.")
+        hist = hist[hist["invoice_date"] >= start]
     purchases = hist[~hist["is_return"]]
     returns = hist[hist["is_return"]]
 
@@ -67,14 +80,24 @@ def build_labels(tx: pd.DataFrame, customers: pd.Index, cutoff: pd.Timestamp, ho
     return pd.Series([0 if c in active else 1 for c in customers], index=customers, name=TARGET)
 
 
-def build_dataset(tx: pd.DataFrame, cutoff: str | pd.Timestamp, horizon_days: int = 90) -> pd.DataFrame:
+def build_dataset(
+    tx: pd.DataFrame, cutoff: str | pd.Timestamp, horizon_days: int = 90, lookback_days: int | None = None
+) -> pd.DataFrame:
     cutoff = pd.Timestamp(cutoff)
     end = cutoff + _days(horizon_days)
     if tx["invoice_date"].max() < end - _days(1):
         raise ValueError(f"Data does not extend to {end:%Y-%m-%d}; the label window would be incomplete.")
-    feats = build_features(tx, cutoff)
+    feats = build_features(tx, cutoff, lookback_days)
     feats[TARGET] = build_labels(tx, feats.index, cutoff, horizon_days)
     return feats
+
+
+def read_lookback_days(model_path: Path) -> int | None:
+    """Lookback window the exported model was trained with (None = full history)."""
+    meta_path = Path(model_path) / "serving_meta.json"
+    if not meta_path.exists():
+        return None
+    return json.loads(meta_path.read_text()).get("lookback_days")
 
 
 def signed_log1p(x):

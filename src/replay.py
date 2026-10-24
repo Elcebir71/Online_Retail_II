@@ -13,11 +13,12 @@ Usage:
 import argparse
 import json
 import urllib.request
+from pathlib import Path
 
 import pandas as pd
 
 from src.data import PROCESSED_PATH
-from src.features import FEATURES, build_features
+from src.features import FEATURES, build_features, read_lookback_days
 
 BATCH_SIZE = 500  # the API accepts at most 1000 customers per request
 
@@ -38,10 +39,12 @@ def main() -> None:
     parser.add_argument("--cutoff", required=True, help="Score customers as of this date (YYYY-MM-DD)")
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     parser.add_argument("--sample", type=int, help="Random sample of customers instead of all of them")
+    parser.add_argument("--model-path", type=Path, default=Path("model"), help="Served model, for its feature window")
     args = parser.parse_args()
 
     tx = pd.read_parquet(PROCESSED_PATH)
-    customers = build_features(tx, pd.Timestamp(args.cutoff))[FEATURES]
+    lookback = read_lookback_days(args.model_path)
+    customers = build_features(tx, pd.Timestamp(args.cutoff), lookback)[FEATURES]
     if args.sample:
         customers = customers.sample(min(args.sample, len(customers)), random_state=42)
     records = customers.to_dict("records")
