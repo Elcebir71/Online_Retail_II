@@ -99,7 +99,46 @@ the setups on this dataset and tests the published methods under the time-based 
 
 The three experiments, on this dataset (results: `reports/comparison.md`):
 
-RESULTS_PLACEHOLDER
+1. **Label leakage.** With the published label (`Recency > 90 days` at the end of the data,
+   random 80/20 split) our plain logistic regression reaches **ROC-AUC 1.000 and 100% accuracy**
+   on the same 4,338 customers the study used. With a real future label it scores 0.745.
+
+   | Setup | ROC-AUC | Accuracy |
+   |---|---|---|
+   | Published label: churn = recency > 90 days, recency as input | 1.000 | 1.000 |
+   | This project: no purchase in the 90 days after the cutoff | 0.745 | 0.668 |
+
+2. **SMOTE before the split.** KNN on 2010 customers with a random split gains +0.071 ROC-AUC
+   just by oversampling before splitting, and the test set becomes an artificial 50/50 mix.
+
+   | Setup (KNN, k=5) | ROC-AUC | Accuracy | Churn rate in test set |
+   |---|---|---|---|
+   | SMOTE on all data, then split (leaky) | 0.730 | 0.662 | 50.0% |
+   | Split, then SMOTE on the training part only | 0.659 | 0.599 | 41.6% |
+
+3. **Published methods in our setup** (train 2010-09-09, test 2011-09-09, 3,223 customers).
+   None beats the served logistic regression in a meaningful way: ANOVA selection is +0.002,
+   PCA and SMOTE change nothing (the classes are already 42/58), and the more flexible models
+   (random forest, boosting, SVM, KNN) are all lower. With eight RFM features, the extra capacity
+   fits noise rather than signal.
+
+   | Model | ROC-AUC | PR-AUC | Precision@20% | Lift@20% | Gain over recency rule |
+   |---|---|---|---|---|---|
+   | Recency rule | 0.684 | 0.592 | 0.657 | 1.55 | reference |
+   | **Logistic regression (served)** | **0.745** | **0.639** | **0.679** | **1.60** | **+0.061** [+0.044, +0.077] |
+   | + ANOVA top-5 features | 0.747 | 0.640 | 0.673 | 1.58 | +0.063 [+0.046, +0.078] |
+   | + PCA (95% variance) | 0.745 | 0.639 | 0.679 | 1.60 | +0.061 [+0.044, +0.077] |
+   | + SMOTE (training data only) | 0.746 | 0.640 | 0.679 | 1.60 | +0.061 [+0.044, +0.077] |
+   | AdaBoost | 0.741 | 0.628 | 0.640 | 1.51 | +0.057 [+0.040, +0.072] |
+   | Random forest | 0.740 | 0.620 | 0.662 | 1.56 | +0.055 [+0.038, +0.072] |
+   | Gradient boosting | 0.735 | 0.623 | 0.651 | 1.53 | +0.050 [+0.033, +0.068] |
+   | SVM (RBF) | 0.732 | 0.630 | 0.665 | 1.57 | +0.048 [+0.030, +0.065] |
+   | KNN (k=15) | 0.718 | 0.597 | 0.636 | 1.50 | +0.034 [+0.015, +0.051] |
+   | KNN (k=15) + SMOTE (training data only) | 0.714 | 0.595 | 0.651 | 1.53 | +0.030 [+0.011, +0.046] |
+
+Takeaway: the 99% figures measure the label definition, not the model. In an honest setup the
+published methods land between −0.031 and +0.002 ROC-AUC of a simple logistic regression, so the served model
+stays the simplest, best-calibrated choice.
 
 ## Project structure
 
