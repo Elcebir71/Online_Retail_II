@@ -19,8 +19,9 @@ spec:
         runAsUser: 1000  # appuser created in the Dockerfile
       containers:
         - name: churn-api
-          image: ghcr.io/elcebir71/online-retail-churn:latest
-          imagePullPolicy: IfNotPresent
+          # Tag is set in kustomization.yaml. No imagePullPolicy: Kubernetes then always pulls
+          # ":latest" and caches pinned tags (IfNotPresent), which is what each case needs.
+          image: ghcr.io/elcebir71/online-retail-churn
           ports:
             - name: http
               containerPort: 8000

@@ -130,6 +130,13 @@ kubectl rollout status deployment/churn-api
 kubectl port-forward service/churn-api 8000:80   # http://127.0.0.1:8000/docs
 ```
 
+`k8s/kustomization.yaml` deploys `latest` by default. For a reproducible deploy, pin the image
+of a specific commit (CI tags every image on `main` with its commit SHA):
+
+```bash
+cd k8s && kustomize edit set image ghcr.io/elcebir71/online-retail-churn:<commit-sha> && cd ..
+```
+
 To test a locally built image instead of the GHCR one:
 
 ```bash
@@ -162,22 +169,54 @@ customers; the cut-off is computed from `model/reference.parquet` at startup and
 
 On every push and pull request, GitHub Actions:
 
-1. Lints the code with **ruff** and runs the **pytest** suite.
-2. Builds the Docker image and **smoke tests** it (`/health` and `/predict`).
-3. On `main` only: publishes the image to **GitHub Container Registry**
+1. Lints the code with **ruff**, runs the **pytest** suite and validates the Kubernetes
+   manifests against the API schema (kubeconform).
+2. Builds the Docker image and **smoke tests** it (`/health`, `/predict`, prediction log written).
+3. Deploys the image to a throwaway **kind** cluster with the manifests in `k8s/` and runs the
+   same checks through the Kubernetes Service.
+4. On `main` only: publishes the image to **GitHub Container Registry**
    (`latest` and commit-SHA tags).
+5. On `main` only: deploys the image **of that commit** (SHA tag, not `latest`) to Azure Container
+   Apps and checks that the live service is healthy.
 
 ### Deployment
 
-The published image runs on **Azure Container Apps** (scale to zero, external HTTPS ingress):
+The live demo runs on **Azure Container Apps** (scale to zero, external HTTPS ingress). The CD job
+logs in to Azure with **OpenID Connect**: GitHub issues a short-lived token for this repository's
+`production` environment, so no Azure password or key is stored anywhere.
+
+**Rollback** = deploy the image of an earlier commit:
 
 ```bash
-az containerapp create --name churn-api --resource-group <rg> --environment <env> \
+az containerapp update --name churn-api --resource-group rg-rag-demo \
+  --image ghcr.io/elcebir71/online-retail-churn:<earlier-commit-sha>
+```
+
+or re-run that commit's workflow from the GitHub Actions tab.
+
+<details>
+<summary>One-time setup (Azure app registration for GitHub OIDC)</summary>
+
+```bash
+az containerapp create --name churn-api --resource-group rg-rag-demo --environment <env> \
   --image ghcr.io/elcebir71/online-retail-churn:latest --target-port 8000 \
   --ingress external --min-replicas 0 --max-replicas 1
-# after a new image is published
-az containerapp update --name churn-api --resource-group <rg> --image ghcr.io/elcebir71/online-retail-churn:latest
+
+APP_ID=$(az ad app create --display-name github-online-retail-churn --query appId -o tsv)
+az ad sp create --id $APP_ID
+az ad app federated-credential create --id $APP_ID --parameters '{"name": "github-production",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:Elcebir71/Online_Retail_II:environment:production",
+  "audiences": ["api://AzureADTokenExchange"]}'
+az role assignment create --assignee $APP_ID --role Contributor \
+  --scope $(az group show --name rg-rag-demo --query id -o tsv)
 ```
+
+Then add the repository **variables** (Settings → Secrets and variables → Actions → Variables)
+`AZURE_CLIENT_ID` (= `$APP_ID`), `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`
+(from `az account show`). The deploy job is skipped while `AZURE_CLIENT_ID` is not set.
+
+</details>
 
 ## Monitoring
 
@@ -251,5 +290,6 @@ Known weaknesses, stated up front:
 - [x] Baseline comparison, precision@k, lift and bootstrap confidence intervals
 - [x] Calibration tested; output renamed to a ranking score with a top-20% risk flag
 - [x] Log served predictions and monitor drift on live traffic
+- [x] Kubernetes deploy tested in CI (kind); SHA-pinned deploy to Azure with OIDC login
 - [ ] Fixed-window features to remove drift caused by growing customer histories
 - [ ] Scheduled monitoring job with automatic retraining
