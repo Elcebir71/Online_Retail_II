@@ -5,7 +5,8 @@ FROM python:${PYTHON_VERSION}-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    MODEL_PATH=/app/model
+    MODEL_PATH=/app/model \
+    PREDICTION_LOG=/app/logs/predictions.jsonl
 
 WORKDIR /app
 
@@ -21,7 +22,7 @@ COPY src/ src/
 COPY model/ model/
 
 # Run as a non-root user (numeric UID so Kubernetes runAsNonRoot can verify it)
-RUN useradd --create-home --uid 1000 appuser
+RUN useradd --create-home --uid 1000 appuser && mkdir -p /app/logs && chown appuser /app/logs
 USER 1000
 
 EXPOSE 8000

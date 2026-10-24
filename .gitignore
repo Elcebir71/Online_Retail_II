@@ -25,5 +25,6 @@ venv/
 *.log
 *.tmp
 *.cache
-# Monitoring reports
+# Monitoring reports and API prediction logs
 reports/
+logs/

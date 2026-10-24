@@ -75,7 +75,8 @@ src/
   train.py         # train, evaluate, log to MLflow, optionally register
   export_model.py  # promote a version to "champion" and export it to model/
   api.py           # FastAPI service (/health, /predict)
-  monitor.py       # data drift (PSI) and performance monitoring
+  monitor.py       # data drift (PSI) and performance monitoring (dataset or API prediction log)
+  replay.py        # send real customers to the API to simulate traffic
   evaluate.py      # model vs. rule baselines, precision@k, lift, bootstrap CIs
 model/             # exported champion model served by the API and the Docker image
 tests/             # unit tests for features and the API
@@ -180,8 +181,17 @@ az containerapp update --name churn-api --resource-group <rg> --image ghcr.io/el
 
 ## Monitoring
 
-`src/monitor.py` compares the customers at one or more monitoring dates with the training
-snapshot that is exported next to the served model (`model/reference.parquet`):
+`src/monitor.py` compares current customers with the training snapshot that is exported next
+to the served model (`model/reference.parquet`). The current customers come from one of two
+sources:
+
+- **Live traffic:** the API appends every scored customer (features, `churn_score`,
+  `high_risk`, model version, timestamp) to a JSON lines log (`PREDICTION_LOG`, default
+  `logs/predictions.jsonl`). This measures drift on what the service actually receives.
+- **Historical simulation:** customer features rebuilt from the dataset at past cutoff dates.
+  Here the churn labels are known, so performance can be tracked too.
+
+What is measured:
 
 - **Data drift:** Population Stability Index (PSI) for every feature and for the predicted
   churn probability (< 0.1 stable, 0.1–0.25 warning, ≥ 0.25 drift). Implemented from scratch
@@ -191,10 +201,16 @@ snapshot that is exported next to the served model (`model/reference.parquet`):
   distribution shifts, or ROC-AUC drops more than 0.05 below the reference.
 
 ```bash
+# Historical simulation over four dates
 python -m src.monitor --cutoff 2010-12-01 2011-03-01 2011-06-01 2011-09-09
+
+# Live traffic: start the API, send it real customers, then monitor its prediction log
+docker run --rm -p 8000:8000 -v ${PWD}/logs:/app/logs churn-api
+python -m src.replay --cutoff 2011-09-09          # posts the customers as of that date to the API
+python -m src.monitor --prediction-log logs/predictions.jsonl [--since 2026-10-01]
 ```
 
-Each period produces `reports/monitoring_<date>.html` and `.json` and an MLflow run in the
+Each run produces `reports/monitoring_<date or live>.html` and `.json` and an MLflow run in the
 `online-retail-churn-monitoring` experiment, so PSI and AUC can be plotted over time in the
 MLflow UI. `--fail-on-alert` makes the script exit with code 1, so it can gate a scheduled job.
 
@@ -215,9 +231,12 @@ Known weaknesses, stated up front:
   predicts 38.6% churn on average and the Brier score worsens from 0.205 to 0.225. With two years
   of data there is no way to calibrate on a period that resembles the next one, so the API
   returns a ranking score and flags the top 20% instead of applying a 0.5 cut-off.
-- **Monitoring is a historical simulation.** `src/monitor.py` replays past cutoff dates from the
-  dataset. The API does not log the requests and predictions it serves, so drift on live
-  traffic is not measured yet.
+- **Live monitoring is drift-only and the log is local.** Predictions are logged to a file, so
+  drift on real traffic can be measured, but churn labels for live customers only exist 90 days
+  later and are not joined back yet. The log is a local file per container: it is lost on a
+  restart or when the Azure demo scales to zero, and with two Kubernetes replicas it is split in
+  two. In production it would go to shared storage (Azure Files or Blob Storage) or a log store
+  such as Azure Log Analytics.
 - **Cumulative features drift by design.** `tenure_days`, `frequency` and `monetary` grow as
   customer histories get longer, which shows up as drift even when behaviour is stable.
 - **One test period.** All test metrics come from a single cutoff (2011-09-09). The bootstrap
@@ -231,6 +250,6 @@ Known weaknesses, stated up front:
 - [x] Data drift and performance monitoring
 - [x] Baseline comparison, precision@k, lift and bootstrap confidence intervals
 - [x] Calibration tested; output renamed to a ranking score with a top-20% risk flag
-- [ ] Log served predictions and monitor live traffic
+- [x] Log served predictions and monitor drift on live traffic
 - [ ] Fixed-window features to remove drift caused by growing customer histories
 - [ ] Scheduled monitoring job with automatic retraining
