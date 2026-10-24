@@ -206,7 +206,7 @@ APP_ID=$(az ad app create --display-name github-online-retail-churn --query appI
 az ad sp create --id $APP_ID
 az ad app federated-credential create --id $APP_ID --parameters '{"name": "github-production",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:Elcebir71/Online_Retail_II:environment:production",
+  "subject": "repo:Elcebir71@30794214/Online_Retail_II@1429766320:environment:production",
   "audiences": ["api://AzureADTokenExchange"]}'
 az role assignment create --assignee $APP_ID --role Contributor \
   --scope $(az group show --name rg-rag-demo --query id -o tsv)
@@ -215,6 +215,10 @@ az role assignment create --assignee $APP_ID --role Contributor \
 Then add the repository **variables** (Settings → Secrets and variables → Actions → Variables)
 `AZURE_CLIENT_ID` (= `$APP_ID`), `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`
 (from `az account show`). The deploy job is skipped while `AZURE_CLIENT_ID` is not set.
+
+The subject uses GitHub's immutable format (owner and repository with their numeric IDs), so
+it keeps working if the repository is renamed. If Azure rejects the login with `AADSTS700213`,
+copy the subject from the error message into the federated credential.
 
 </details>
 
