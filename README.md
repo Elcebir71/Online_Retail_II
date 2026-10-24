@@ -273,9 +273,19 @@ Each run produces `reports/monitoring_<date or live>.html` and `.json` and an ML
 `online-retail-churn-monitoring` experiment, so PSI and AUC can be plotted over time in the
 MLflow UI. `--fail-on-alert` makes the script exit with code 1, so it can gate a scheduled job.
 
-**Finding:** cumulative features such as `tenure_days`, `frequency` and `monetary` drift by
-construction, because customer histories get longer as time passes. A natural next step is to
-compute them over a fixed window (e.g. the last 12 months) so the model sees stable inputs.
+**Finding:** with full-history features (v6), `recency_days` and `tenure_days` drifted in most
+periods, simply because customer histories get longer as the dataset ages. With the 270-day
+window (v9), recency no longer drifts at all, and ROC-AUC stays between 0.745 and 0.774:
+
+| Monitoring date | 2010-12-01 | 2011-03-01 | 2011-06-01 | 2011-09-09 |
+|---|---|---|---|---|
+| Customers | 3,950 | 3,841 | 3,898 | 3,223 |
+| ROC-AUC | 0.759 | 0.774 | 0.765 | 0.745 |
+| Drift (PSI ≥ 0.25) | – | `tenure_days` | `tenure_days` | – |
+
+The remaining `tenure_days` drift appears in spring and summer only and disappears again in
+September, the training season: it is seasonal (who first bought within the window), not
+structural, which is the kind of drift a monitor should report.
 
 ## Limitations
 
