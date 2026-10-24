@@ -58,7 +58,7 @@ class Customer(BaseModel):
                 "monetary": 1250.5,
                 "avg_order_value": 208.4,
                 "n_products": 38,
-                "tenure_days": 300,
+                "tenure_days": 250,
                 "return_rate": 0.02,
                 "orders_last_90d": 1,
                 "country": "United Kingdom",

@@ -24,47 +24,66 @@ number of distinct products, tenure, return rate, orders in the last 90 days, co
 
 ## Results
 
-Time-based split: train on customers as of 2010-09-09, test on 5,278 customers as of 2011-09-09
-(same season one year later, no leakage from the future). 56.8% of test customers churn, which is
-also the precision of targeting customers at random.
+Time-based split: train on customers as of 2010-09-09, test on customers as of 2011-09-09
+(same season one year later, no leakage from the future). Features use only the **270 days
+before each cutoff** (see [Why a fixed window](#why-a-fixed-window)), so the test set holds the
+3,223 customers who bought in that window. 42.5% of them churn, which is also the precision of
+targeting customers at random.
 
 **Model vs. simple rules** (`python -m src.evaluate`, 95% bootstrap interval in brackets):
 
 | Ranking | ROC-AUC | PR-AUC | Precision@10% | Precision@20% | Recall@20% | Lift@20% |
 |---|---|---|---|---|---|---|
-| Recency rule (days since last purchase) | 0.762 [0.749–0.776] | 0.801 | 0.905 | 0.868 | 0.306 | 1.53 |
-| No order in the last 90 days | 0.688 [0.675–0.700] | 0.684 | 0.716 | 0.711 | 0.251 | 1.25 |
-| **Logistic regression** (served, v6) | **0.771** [0.759–0.783] | 0.793 | 0.866 | 0.839 | 0.296 | 1.48 |
-| HistGradientBoosting | 0.74 | 0.76 | | | | |
+| Recency rule (days since last purchase) | 0.684 [0.668–0.703] | 0.592 | 0.686 | 0.657 | 0.309 | 1.55 |
+| No order in the last 90 days | 0.638 [0.622–0.654] | 0.518 | 0.562 | 0.546 | 0.257 | 1.28 |
+| **Logistic regression** (served, v9) | **0.745** [0.729–0.762] | **0.639** | **0.708** | **0.679** | **0.320** | **1.60** |
 
-**The honest reading:** the model is only **+0.009 ROC-AUC** better than ranking customers by
-recency alone, and the 95% interval of that gain (−0.003 to +0.021) includes zero. For a
-campaign aimed at the riskiest 10–20% of customers, the recency rule is even slightly more
-precise. In this dataset, *when did the customer last buy* carries almost all of the signal; the
-other RFM features add little on top. Logistic regression still beats gradient boosting, which
-overfits these few, near-monotonic features.
+The model beats the strongest rule by **+0.061 ROC-AUC** (95% interval +0.044 to +0.077) and is
+more precise at every campaign size shown. Logistic regression was also compared with gradient
+boosting, which overfits these few, near-monotonic features (0.74 vs. 0.77 ROC-AUC on the
+full-history features).
 
-What this means for marketing: targeting the riskiest 20% (by either the model or recency)
-reaches customers of whom ~84–87% would churn, a lift of ~1.5× over random targeting, and
-covers ~30% of all churners. The decile table shows where the budget stops paying off: from
-decile 6 on, churn rates fall below the average.
+What this means for marketing: the riskiest 20% of customers by model score churn at ~68%,
+a lift of 1.6× over random targeting, and include a third of all churners. The decile table
+shows where a retention budget stops paying off: from decile 7 on, churn rates fall below average.
 
 | Decile (riskiest first) | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Churn rate | 86.6% | 81.2% | 77.8% | 69.1% | 65.3% | 57.6% | 52.5% | 42.2% | 26.4% | 8.9% |
-| Cumulative share of churners reached | 15% | 30% | 43% | 56% | 67% | 77% | 86% | 94% | 98% | 100% |
+| Churn rate | 70.6% | 65.3% | 58.2% | 59.0% | 46.9% | 43.5% | 37.6% | 24.8% | 15.8% | 3.1% |
+| Cumulative share of churners reached | 17% | 32% | 46% | 60% | 71% | 81% | 90% | 96% | 99% | 100% |
 
 ![Cumulative gains chart](docs/gains_chart.png)
 
-The gains chart shows where the small ROC-AUC gain comes from: model and recency rule are
-indistinguishable for the riskiest ~60% of customers, and the model only pulls ahead in the
-safest ~35%, where it separates loyal customers better (the yes/no 90-day rule bends at ~63%,
-the share of customers with no recent order). That part of the ranking matters for excluding
-loyal customers from discounts, not for choosing whom to target.
+**Calibrated scores.** The served model is calibrated with Platt scaling on cross-validated
+training predictions. On the test set it predicts 41.9% churn on average against 42.5% actual,
+with a Brier score of 0.201 (0.244 for always predicting the churn rate), so `churn_score` can
+be read as a churn probability.
 
-The value of the project is therefore less in the model's lift over a rule and more in the
-pipeline around it: versioning, serving, CI/CD and monitoring work the same way for a stronger
-model (see [Limitations](#limitations) and the roadmap).
+![Calibration chart](docs/calibration_chart.png)
+
+### Why a fixed window
+
+The first version computed features over each customer's full history. That looked good,
+ROC-AUC 0.771, but a baseline comparison showed the model was only +0.009 better than the
+recency rule (interval −0.003 to +0.021, not significant). The cause was the full history:
+
+- **Dormant customers inflate the test set.** A customer who last bought 600 days ago is still
+  "a customer" as of 2011, and is an easy churn case for any rule. They pushed the test churn
+  rate to 56.8% (vs. 42.4% in training) and let recency alone explain almost everything.
+- **That same shift broke calibration.** Probabilities calibrated on 2010 predicted 38.6% churn
+  for 2011, and calibration made the Brier score worse (0.205 → 0.225).
+- **Cumulative features drift by design.** `tenure_days`, `frequency` and `monetary` grow as the
+  dataset gets older, so monitoring flagged drift even when behaviour was stable.
+
+With a fixed 270-day window (the history available at the training cutoff), train and test
+churn rates match (41.6% vs. 42.5%), calibration works, and the model's gain over the rule
+becomes clear. The test set is harder, hence the lower headline ROC-AUC, but the comparison is
+fairer.
+
+| Feature history | Test customers | Test churn | Model ROC-AUC | Recency rule | Gain over rule |
+|---|---|---|---|---|---|
+| Full history (v6) | 5,278 | 56.8% | 0.771 | 0.762 | +0.009 [−0.003, +0.021] |
+| Last 270 days (v9) | 3,223 | 42.5% | 0.745 | 0.684 | **+0.061** [+0.044, +0.077] |
 
 ## Project structure
 
@@ -153,7 +172,7 @@ Example request:
 curl -X POST http://127.0.0.1:8000/predict \
   -H "Content-Type: application/json" \
   -d '{"customers": [{"recency_days": 45, "frequency": 6, "monetary": 1250.5, "avg_order_value": 208.4,
-       "n_products": 38, "tenure_days": 300, "return_rate": 0.02, "orders_last_90d": 1,
+       "n_products": 38, "tenure_days": 250, "return_rate": 0.02, "orders_last_90d": 1,
        "country": "United Kingdom"}]}'
 ```
 
@@ -261,23 +280,22 @@ compute them over a fixed window (e.g. the last 12 months) so the model sees sta
 
 Known weaknesses, stated up front:
 
-- **Small gain over a simple rule.** The served model is not significantly better than ranking by
-  recency (see [Results](#results)). A stronger model needs new signal, for example product
-  categories, seasonality of individual customers, or fixed-window behaviour features.
-- **Scores are not calibrated probabilities, on purpose.** Platt scaling on the training data was
-  tried (`python -m src.train --calibration sigmoid`) and made things worse: the churn rate rises
-  from 42.4% (2010 training customers) to 56.8% (2011 test customers), so the calibrated model
-  predicts 38.6% churn on average and the Brier score worsens from 0.205 to 0.225. With two years
-  of data there is no way to calibrate on a period that resembles the next one, so the API
-  returns a ranking score and flags the top 20% instead of applying a 0.5 cut-off.
+- **Customers inactive for more than 270 days are not scored.** They fall outside the feature
+  window and are effectively lost already; they belong in a win-back campaign, not a churn
+  model. The window is also capped by the data: with more history, a 12-month window would
+  cover a full seasonal cycle.
+- **Modest absolute performance.** ROC-AUC 0.745 on RFM features alone. More signal would need
+  product categories, discounts or customer-level seasonality, which the dataset does not
+  describe well.
+- **The `high_risk` cut-off is not cost-based.** It flags the riskiest 20% of training customers.
+  With calibrated scores, a cut-off from the cost of a retention offer vs. the value of a saved
+  customer would be the better choice once those numbers are known.
 - **Live monitoring is drift-only and the log is local.** Predictions are logged to a file, so
   drift on real traffic can be measured, but churn labels for live customers only exist 90 days
   later and are not joined back yet. The log is a local file per container: it is lost on a
   restart or when the Azure demo scales to zero, and with two Kubernetes replicas it is split in
   two. In production it would go to shared storage (Azure Files or Blob Storage) or a log store
   such as Azure Log Analytics.
-- **Cumulative features drift by design.** `tenure_days`, `frequency` and `monetary` grow as
-  customer histories get longer, which shows up as drift even when behaviour is stable.
 - **One test period.** All test metrics come from a single cutoff (2011-09-09). The bootstrap
   intervals cover sampling noise between customers, not variation between time periods.
 
@@ -291,5 +309,5 @@ Known weaknesses, stated up front:
 - [x] Calibration tested; output renamed to a ranking score with a top-20% risk flag
 - [x] Log served predictions and monitor drift on live traffic
 - [x] Kubernetes deploy tested in CI (kind); SHA-pinned deploy to Azure with OIDC login
-- [ ] Fixed-window features to remove drift caused by growing customer histories
+- [x] Fixed 270-day feature window: removes structural drift and makes calibration work
 - [ ] Scheduled monitoring job with automatic retraining
